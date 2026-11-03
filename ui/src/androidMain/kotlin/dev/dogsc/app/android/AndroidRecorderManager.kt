@@ -393,7 +393,12 @@ internal class RecordingCoordinator(
                 runCatching { retriever.release() }
             }
         }.getOrDefault(0.0)
-        rawDuration = max(probedDuration, max(screenRecorder?.lastPresentationTimeUs?.div(1_000_000.0) ?: 0.0, elapsedSeconds()))
+        val encodedDuration = screenRecorder?.lastPresentationTimeUs?.div(1_000_000.0) ?: 0.0
+        rawDuration = when {
+            probedDuration > 0.1 -> probedDuration
+            encodedDuration > 0.1 && encodedDuration < 6 * 60 * 60 -> encodedDuration
+            else -> elapsedSeconds()
+        }
         screenRecorder = null
         micRecorder = null
         systemRecorder = null
