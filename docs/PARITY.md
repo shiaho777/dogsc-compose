@@ -32,7 +32,7 @@ Last updated: 2026-11-04.
 | Ripple delete | `deletePrimaryRange` | Done | Core split/delete test |
 | Restore cuts | Restore one gap or all cuts | Done | Core restore test |
 | Reorder primary segments | Drag primary segment middle to a new position | Partial | Core reorder test; drag UI not yet visually verified |
-| Speed 1×–100× | Per-segment slider + presets; timeline map retimes video and auxiliary tracks | Partial | Core speed/auxiliary plan test; UI controls present; end-to-end export with speed not yet re-verified |
+| Speed 1×–100× | Per-segment slider + presets; timeline map retimes video and auxiliary tracks | Done | Emulator: split at 4 s, first segment 2× → editor 10.03 s; export 10.05 s video / 10.03 s AAC. Frame matching against a 1× baseline export: 10/10 samples hit the expected source time (out t<2 → 2t, else t+2), worst error 0 s. Audio content mapping not separately measured (sine test tone) |
 | Undo/redo | Bounded snapshot stack; all editor commands go through `EditorSession` | Done | UI buttons + labels |
 | Per-segment audio overrides | System/mic mute + volume per primary segment, restore inheritance | Partial | UI in primary inspector; mixer honors overrides; authored-volume export not re-verified end-to-end |
 
