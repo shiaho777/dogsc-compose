@@ -21,7 +21,7 @@ Last updated: 2026-11-03.
 | Recording markers | Marker button/notification/overlay, persisted and shown on timeline | Done | `RecordingMarker` + marker sheet |
 | Floating recorder controls | `TYPE_APPLICATION_OVERLAY` with `FLAG_SECURE`, draggable pill | Done | Excluded from capture; notification fallback when overlay permission is denied |
 | Recording memo/teleprompter | Not implemented | Gap | |
-| Crash recovery journal | Preliminary project JSON is written at recording start; an interrupted recording appears in the library and can be opened | Partial | Basic recovery; pause/marker state is finalized only on normal stop |
+| Crash recovery journal | Preliminary project JSON is written at recording start; an interrupted recording appears in the library and can be opened | Partial | Shell implemented; interrupted-recording recovery not yet exercised |
 
 ## Primary editing
 
@@ -31,16 +31,16 @@ Last updated: 2026-11-03.
 | Trim primary edges | Drag segment edges in timeline | Done | Core trim test |
 | Ripple delete | `deletePrimaryRange` | Done | Core split/delete test |
 | Restore cuts | Restore one gap or all cuts | Done | Core restore test |
-| Reorder primary segments | Drag primary segment middle to a new position | Done | Core reorder test; timeline drag commit |
-| Speed 1×–100× | Per-segment slider + presets; timeline map retimes video and auxiliary tracks | Done | Core speed/auxiliary plan test; UI controls in primary inspector |
+| Reorder primary segments | Drag primary segment middle to a new position | Partial | Core reorder test; drag UI not yet visually verified |
+| Speed 1×–100× | Per-segment slider + presets; timeline map retimes video and auxiliary tracks | Partial | Core speed/auxiliary plan test; UI controls present; end-to-end export with speed not yet re-verified |
 | Undo/redo | Bounded snapshot stack; all editor commands go through `EditorSession` | Done | UI buttons + labels |
-| Per-segment audio overrides | System/mic mute + volume per primary segment, restore inheritance | Done | UI in primary inspector; mixer honors overrides |
+| Per-segment audio overrides | System/mic mute + volume per primary segment, restore inheritance | Partial | UI in primary inspector; mixer honors overrides; authored-volume export not re-verified end-to-end |
 
 ## Timeline
 
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
-| Filmstrip | 12 cached source frames, mapped through timeline cuts/retime | Done | `loadFilmstrip` + timeline drawing |
+| Filmstrip | 12 cached source frames, mapped through timeline cuts/retime | Partial | `loadFilmstrip` + timeline drawing; not yet visually verified |
 | Waveform | Decodes AAC/PCM to 700 peaks; toggle in timeline | Done | Real peaks aligned through `TimelineMap` |
 | Zoom track | Mint clips, move/resize/select | Done | |
 | Screen 3D track | Clips with timing | Done | |
@@ -83,7 +83,7 @@ Last updated: 2026-11-03.
 | Padding/content position/scale | Sliders + position pad | Done | |
 | Corner/border/shadow/inset opacity | Sliders + color palette | Done | |
 | Background patterns | Five presets | Done | Canvas renderer |
-| Dynamic backgrounds | Three presets with time-driven drift/dot motion | Done | Preview and export both read `scene.time` |
+| Dynamic backgrounds | Three presets with time-driven drift/dot motion | Partial | Preview and export both read `scene.time`; visual verification pending |
 | Custom image/video background | SAF import + cover draw | Partial | Video background decoded per frame; blur is approximate |
 | Window/browser frames | Chrome + title/address + scale/radius | Done | |
 | Phone/tablet frames | Adaptive device bezel | Done | |
@@ -103,7 +103,7 @@ Last updated: 2026-11-03.
 | Preview/export consistency | Shared `FrameScene` | Partial | 2D matches; 3D preview is approximate; GPU renderer pending |
 | Estimated size/ETA | Bitrate policy + live progress | Done | |
 | Cancel export | Volatile cancel flag + UI | Done | |
-| Export selection/trim | Range slider in export sheet; video/audio renderer trims and re-bases timestamps | Done | `ExportRequest.trimStart/trimEnd`, fast audio copy trims samples |
+| Export selection/trim | Range slider in export sheet; video/audio renderer trims and re-bases timestamps | Partial | Implemented; trimmed export not yet re-verified end-to-end |
 | Long-recording performance | CPU Canvas + native YUV | Partial | ~4× realtime at 1080p30 on emulator; GL renderer required |
 
 ## Product surface
