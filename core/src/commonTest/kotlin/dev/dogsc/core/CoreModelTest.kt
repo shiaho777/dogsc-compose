@@ -312,3 +312,19 @@ class SpeedAndAuxiliaryPlanTest {
         assertEquals(quad.bottomRight.y, bottomRight.y, 0.0001)
     }
 }
+
+class PrimaryReorderTest {
+    @Test
+    fun reorderChangesOutputOrderWithoutChangingSourceContent() {
+        val project = RecorderProject()
+        val split = dev.dogsc.core.editor.TimelineEditor.splitPrimary(project, 10.0, 4.0)!!
+        val second = (split.timeline.sourceSequence as dev.dogsc.core.model.SourceSequence.Edited).segments[1]
+        val moved = dev.dogsc.core.editor.TimelineEditor.movePrimarySegment(split, 10.0, second.id, 0)!!
+        val map = dev.dogsc.core.editor.TimelineEditor.timelineMap(moved, 10.0)
+        assertEquals(4.0, map.segments[0].sourceStart, 0.0001)
+        assertEquals(6.0, map.segments[0].sourceDuration, 0.0001)
+        assertEquals(0.0, map.segments[1].sourceStart, 0.0001)
+        assertEquals(4.0, map.segments[1].sourceDuration, 0.0001)
+        assertEquals(10.0, map.outputDuration, 0.0001)
+    }
+}

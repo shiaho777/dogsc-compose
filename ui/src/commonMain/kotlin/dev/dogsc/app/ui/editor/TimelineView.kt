@@ -450,7 +450,18 @@ private fun TimelineCanvas(
                             else -> Unit
                         }
                     },
-                    onDragEnd = { dragHit = null },
+                    onDragEnd = {
+                        val hit = dragHit
+                        if (hit is TimelineHit.Primary && !hit.edge) {
+                            val duration = state.outputDuration
+                            val targetTime = (lastX / size.width * duration).coerceIn(0.0, duration)
+                            val map = TimelineEditor.timelineMap(project, state.sourceDuration)
+                            val targetIndex = map.segments.indexOfLast { it.outputStart <= targetTime }
+                                .coerceAtLeast(0)
+                            state.movePrimarySegment(hit.segmentId, targetIndex)
+                        }
+                        dragHit = null
+                    },
                     onDragCancel = { dragHit = null },
                 )
             },

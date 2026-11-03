@@ -31,7 +31,7 @@ Last updated: 2026-11-03.
 | Trim primary edges | Drag segment edges in timeline | Done | Core trim test |
 | Ripple delete | `deletePrimaryRange` | Done | Core split/delete test |
 | Restore cuts | Restore one gap or all cuts | Done | Core restore test |
-| Reorder primary segments | Not exposed | Gap | Model supports reorder through `SourceSequence.Edited` |
+| Reorder primary segments | Drag primary segment middle to a new position | Done | Core reorder test; timeline drag commit |
 | Speed 1×–100× | Per-segment slider + presets; timeline map retimes video and auxiliary tracks | Done | Core speed/auxiliary plan test; UI controls in primary inspector |
 | Undo/redo | Bounded snapshot stack; all editor commands go through `EditorSession` | Done | UI buttons + labels |
 | Per-segment audio overrides | System/mic mute + volume per primary segment, restore inheritance | Done | UI in primary inspector; mixer honors overrides |
@@ -126,7 +126,7 @@ Last updated: 2026-11-03.
 
 ## Verification log
 
-- `./gradlew :core:jvmTest` — 18 tests, green.
+- `./gradlew :core:jvmTest` — 19 tests, green.
 - `./gradlew :androidApp:assembleRelease` — green.
 - Emulator (Android 15, hardware GPU): cold start 1.6 s release, 1.8 s on second run.
 - Recorded 90.78 s screen + 88.81 s system audio; project reopened with correct duration.
@@ -140,6 +140,6 @@ Last updated: 2026-11-03.
 3. Continuous touch motion or a stronger gesture-based substitute; accessibility service enablement reliability.
 4. Reliable PCM mixer performance for authored multi-source volume, plus long-recording/4K stress tests.
 5. Pinch timeline zoom, multi-select, hover preview, physical keyboard handling.
-6. Reorder primary segments; cut-boundary hover/right-click affordance.
+6. Cut-boundary hover/right-click affordance.
 7. Wallpaper library, English localization, tablet visual verification, iOS/desktop/web targets.
 8. Import upstream `.dogsc` project packages and crash-recovery journal.

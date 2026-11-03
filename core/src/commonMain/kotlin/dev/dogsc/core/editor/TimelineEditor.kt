@@ -158,6 +158,31 @@ object TimelineEditor {
         }
     }
 
+    fun movePrimarySegment(
+        project: RecorderProject,
+        sourceDuration: Double,
+        segmentID: String,
+        targetIndex: Int,
+    ): RecorderProject? {
+        val map = timelineMap(project, sourceDuration)
+        if (map.segments.size <= 1) return null
+        val segments = map.segments.map {
+            RecordingSegment(
+                id = it.id,
+                sourceStart = it.sourceStart,
+                sourceDuration = it.sourceDuration,
+                playbackRate = it.playbackRate,
+            )
+        }.toMutableList()
+        val fromIndex = segments.indexOfFirst { it.id == segmentID }
+        if (fromIndex < 0) return null
+        val segment = segments.removeAt(fromIndex)
+        val destination = targetIndex.coerceIn(0, segments.size)
+        if (destination == fromIndex) return null
+        segments.add(destination, segment)
+        return project.copy(timeline = project.timeline.copy(sourceSequence = SourceSequence.Edited(segments)))
+    }
+
     fun setPlaybackRate(
         project: RecorderProject,
         sourceDuration: Double,

@@ -685,6 +685,12 @@ class DogScAppState(
         }
     }
 
+    fun movePrimarySegment(segmentId: String, targetIndex: Int) {
+        updateProject("重排主片段") {
+            TimelineEditor.movePrimarySegment(it, sourceDuration, segmentId, targetIndex)
+        }
+    }
+
     fun setPrimaryPlaybackRate(segmentId: String, rate: Double) {
         updateProject("调整片段速度") {
             TimelineEditor.setPlaybackRate(it, sourceDuration, segmentId, rate)
