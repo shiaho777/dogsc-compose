@@ -48,3 +48,11 @@ The accessibility service only records normalized click/scroll positions. It doe
 ## 10. Keep the visual language
 
 The workspace uses upstream's Soft Silver / Graphite tokens, Alibaba PuHuiTi typography, pill controls, soft cards, mint auto-zoom clips and red playhead. The layout is adapted for touch (inspector sheet on phones, rail on wide screens), not redesigned into generic Material.
+
+## 11. Edits autosave; the app can be killed at any time
+
+A macOS document app is rarely killed without warning, but Android reclaims background processes routinely. Every committed edit schedules a debounced save (1.2 s). Leaving the editor and the app going to the background (`ON_STOP`) flush immediately. Writes are serialized and atomic (temp file + rename), so a kill mid-write keeps the previous version. The manual "保存" menu item remains for explicit confirmation.
+
+## 12. Edge sliders opt out of system back gestures
+
+Full-width sliders put their thumbs inside Android's gesture-navigation edge zone, so dragging a thumb at either end was read as "back" and closed the sheet. `excludeSystemGestures()` (an expect/actual modifier; no-op on platforms without edge gestures) is applied to shared sliders and the export range slider, so drags behave like upstream's pointer drags.

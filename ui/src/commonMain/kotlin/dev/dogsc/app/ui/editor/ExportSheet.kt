@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -51,6 +52,7 @@ import dev.dogsc.app.ui.components.SegmentedControl
 import dev.dogsc.app.ui.components.SoftCard
 import dev.dogsc.app.ui.formatFileSize
 import dev.dogsc.app.ui.formatTimecode
+import dev.dogsc.app.ui.excludeSystemGestures
 import dev.dogsc.app.ui.theme.DogScColors
 import dev.dogsc.core.model.CanvasResolution
 import dev.dogsc.core.model.ExportEstimator
@@ -76,10 +78,16 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
         val h = summary.pixelHeight
         if (w != null && h != null && w > 0 && h > 0) dev.dogsc.core.model.CanvasDimensions(w, h) else null
     }
-    val estimate = remember(selectedResolution, selectedFrameRate, project, state.outputDuration, sourcePixelSize) {
+    val totalDuration = state.outputDuration
+    // Slider values are Float; snap to the Double bounds so an untouched range exports the full timeline.
+    val rangeStart = trimStart.toDouble().let { if (it <= RangeSnapTolerance) 0.0 else it }.coerceIn(0.0, totalDuration)
+    val rangeEnd = trimEnd.toDouble().let { if (it >= totalDuration - RangeSnapTolerance) totalDuration else it }
+        .coerceIn(rangeStart, totalDuration)
+    val exportDuration = max(rangeEnd - rangeStart, 0.0)
+    val estimate = remember(selectedResolution, selectedFrameRate, project, exportDuration, sourcePixelSize) {
         ExportEstimator.estimate(
             project,
-            state.outputDuration,
+            exportDuration,
             state.sourceAspectRatio,
             resolution = selectedResolution,
             frameRate = selectedFrameRate,
@@ -106,7 +114,7 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
             Text("导出作品", color = DogScColors.PrimaryText, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
             Text(
-                "${formatTimecode(state.outputDuration)} · ${estimate.width}×${estimate.height}",
+                "${formatTimecode(exportDuration)} · ${estimate.width}×${estimate.height}",
                 color = DogScColors.TertiaryText,
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -141,6 +149,54 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     compact = true,
                 )
+                Spacer(Modifier.height(12.dp))
+            }
+            if (totalDuration > MinExportRange) {
+                SectionLabel("导出范围") {
+                    Text(
+                        "${formatTimecode(rangeStart)} – ${formatTimecode(rangeEnd)}",
+                        color = DogScColors.PrimaryText,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                RangeSlider(
+                    value = rangeStart.toFloat()..rangeEnd.toFloat(),
+                    onValueChange = { range ->
+                        val minGap = MinExportRange.toFloat()
+                        var start = range.start
+                        var end = range.endInclusive
+                        if (end - start < minGap) {
+                            if (start != trimStart) start = (end - minGap).coerceAtLeast(0f)
+                            else end = (start + minGap).coerceAtMost(totalDuration.toFloat())
+                        }
+                        trimStart = start
+                        trimEnd = end
+                    },
+                    valueRange = 0f..totalDuration.toFloat(),
+                    enabled = progress == null,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = DogScColors.PrimaryText,
+                        inactiveTrackColor = DogScColors.ControlWell,
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(32.dp).excludeSystemGestures(),
+                )
+                if (rangeStart > 0.0 || rangeEnd < totalDuration) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "仅导出所选 ${formatTimecode(exportDuration)}",
+                            color = DogScColors.TertiaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        PillButton(
+                            "导出全部",
+                            onClick = { trimStart = 0f; trimEnd = totalDuration.toFloat() },
+                            variant = PillVariant.Ghost,
+                            compact = true,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
             }
             SectionLabel("文件名")
@@ -239,8 +295,8 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
                                     state.startExport(
                                         uri,
                                         audioOnly,
-                                        trimStart.toDouble(),
-                                        trimEnd.toDouble(),
+                                        rangeStart,
+                                        rangeEnd,
                                     )
                                 }
                             }
@@ -259,3 +315,6 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
         }
     }
 }
+
+private const val MinExportRange = 0.5
+private const val RangeSnapTolerance = 0.001

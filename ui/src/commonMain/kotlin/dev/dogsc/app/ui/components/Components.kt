@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.dogsc.app.ui.excludeSystemGestures
 import dev.dogsc.app.ui.theme.DogScColors
 import dev.dogsc.app.ui.theme.DogScFontMedium
 import kotlin.math.roundToInt
@@ -283,7 +284,7 @@ fun LabeledSlider(
                 activeTrackColor = DogScColors.PrimaryText,
                 inactiveTrackColor = DogScColors.ControlWell,
             ),
-            modifier = Modifier.fillMaxWidth().height(28.dp),
+            modifier = Modifier.fillMaxWidth().height(28.dp).excludeSystemGestures(),
         )
     }
 }
