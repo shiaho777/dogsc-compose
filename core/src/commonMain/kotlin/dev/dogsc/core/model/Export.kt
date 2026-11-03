@@ -65,22 +65,33 @@ data class ExportEstimate(
 )
 
 object ExportEstimator {
-    fun estimate(project: RecorderProject, durationSeconds: Double, sourceAspectRatio: Double): ExportEstimate {
-        val dimensions = project.canvas.pixelDimensions(
-            project.exportSettings.resolution,
-            sourceAspectRatio,
-            null,
+    /**
+     * Uses the same `pixelDimensions` call as the exporter, so the size shown before export
+     * equals the encoded file. Pass the real source pixel size, otherwise "原始素材" has to guess.
+     */
+    fun estimate(
+        project: RecorderProject,
+        durationSeconds: Double,
+        sourceAspectRatio: Double,
+        resolution: CanvasResolution = project.exportSettings.resolution,
+        frameRate: OutputFrameRate = project.exportSettings.frameRate,
+        sourcePixelSize: CanvasDimensions? = null,
+    ): ExportEstimate {
+        val raw = project.canvas.pixelDimensions(resolution, sourceAspectRatio, sourcePixelSize)
+        val dimensions = CanvasDimensions(
+            (raw.width / 2 * 2).coerceAtLeast(2),
+            (raw.height / 2 * 2).coerceAtLeast(2),
         )
         val bitrate = ExportEncodingPolicy.videoBitrate(
             dimensions.width,
             dimensions.height,
-            project.exportSettings.frameRate.value,
+            frameRate.value,
         )
         val bytes = ((bitrate + ExportEncodingPolicy.AudioBitrate).toDouble() / 8 * durationSeconds).toLong()
         return ExportEstimate(
             dimensions.width,
             dimensions.height,
-            project.exportSettings.frameRate.value,
+            frameRate.value,
             durationSeconds,
             bitrate,
             bytes,

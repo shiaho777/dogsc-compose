@@ -87,6 +87,8 @@ fun DogScApp(host: DogScHost) {
         state.openLibrary()
     }
 
+    OnAppBackground { state.flushPendingSave() }
+
     DogScTheme {
         Box(Modifier.fillMaxSize().background(DogScColors.Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (state.showOnboarding) {

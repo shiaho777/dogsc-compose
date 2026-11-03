@@ -24,6 +24,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.max
 import kotlin.math.min
 
@@ -130,6 +132,8 @@ class DogScAppState(
     private var playbackJob: Job? = null
     private var toastJob: Job? = null
     private var exportJob: Job? = null
+    private var autosaveJob: Job? = null
+    private val saveMutex = Mutex()
     private var toastCounter = 0L
     var exportProgress by mutableStateOf<ExportProgress?>(null)
         private set
@@ -228,6 +232,7 @@ class DogScAppState(
 
     fun openLibrary() {
         stopPlayback()
+        flushPendingSave()
         screen = AppScreen.Library
         session = null
         loadedProject = null
@@ -417,17 +422,43 @@ class DogScAppState(
     }
 
     fun saveProject(showConfirmation: Boolean = false) {
+        autosaveJob?.cancel()
         val project = project ?: return
-        scope.launch {
-            val saved = platform.saveProject(project)
-            if (saved) {
-                session?.markSaved()
+        scope.launch { persist(project, showConfirmation) }
+    }
+
+    /** Writes pending edits immediately: leaving the editor or the app going to the background. */
+    fun flushPendingSave() {
+        autosaveJob?.cancel()
+        autosaveJob = null
+        if (!isDirty) return
+        val project = project ?: return
+        scope.launch { persist(project, showConfirmation = false) }
+    }
+
+    private fun scheduleAutosave() {
+        autosaveJob?.cancel()
+        if (!isDirty) return
+        autosaveJob = scope.launch {
+            delay(AutosaveDelayMs)
+            val project = project ?: return@launch
+            // Separate job so a newer edit cancelling the debounce never interrupts an in-flight write.
+            scope.launch { persist(project, showConfirmation = false) }
+        }
+    }
+
+    private suspend fun persist(project: RecorderProject, showConfirmation: Boolean) {
+        val saved = saveMutex.withLock { platform.saveProject(project) }
+        if (saved) {
+            val current = session
+            if (current != null && current.project === project) {
+                current.markSaved()
                 sessionRevision++
-                refreshProjects()
-                if (showConfirmation) showToast("项目已保存")
-            } else {
-                showToast("保存失败，请检查存储空间", isError = true)
             }
+            refreshProjects()
+            if (showConfirmation) showToast("项目已保存")
+        } else {
+            showToast("保存失败，请检查存储空间", isError = true)
         }
     }
 
@@ -476,6 +507,7 @@ class DogScAppState(
     private fun onProjectChanged() {
         requestPreviewFrame(playhead)
         if (showWaveform) requestWaveform()
+        scheduleAutosave()
     }
 
     fun toggleWaveform() {
@@ -876,17 +908,22 @@ class DogScAppState(
                     trimEnd = trimEnd,
                 ),
             ) { progress ->
-                scope.launch { exportProgress = progress }
+                scope.launch { if (lastExport == null && exportJob?.isActive == true) exportProgress = progress }
             }
             lastExport = result
             if (result is ExportResult.Success) {
-                exportProgress = ExportProgress(1f, "导出完成")
+                exportProgress = null
                 showToast("已导出 ${formatFileSize(result.sizeBytes)}")
             } else if (result is ExportResult.Failure) {
                 exportProgress = null
                 showToast(result.message, isError = true)
             }
         }
+    }
+
+    fun clearExportResult() {
+        lastExport = null
+        exportProgress = null
     }
 
     fun cancelExport() {
@@ -951,3 +988,5 @@ class DogScAppState(
         return TimelineEditor.snapTime(time, TimelineEditor.clipBoundaries(project, sourceDuration), threshold)
     }
 }
+
+private const val AutosaveDelayMs = 1_200L

@@ -71,8 +71,20 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
     var selectedFrameRate by remember { mutableStateOf(project.exportSettings.frameRate) }
     var trimStart by remember { mutableStateOf(0f) }
     var trimEnd by remember { mutableStateOf(state.outputDuration.toFloat()) }
-    val estimate = remember(selectedResolution, selectedFrameRate, project, state.outputDuration) {
-        ExportEstimator.estimate(project, state.outputDuration, state.sourceAspectRatio)
+    val sourcePixelSize = state.loadedProject?.summary?.let { summary ->
+        val w = summary.pixelWidth
+        val h = summary.pixelHeight
+        if (w != null && h != null && w > 0 && h > 0) dev.dogsc.core.model.CanvasDimensions(w, h) else null
+    }
+    val estimate = remember(selectedResolution, selectedFrameRate, project, state.outputDuration, sourcePixelSize) {
+        ExportEstimator.estimate(
+            project,
+            state.outputDuration,
+            state.sourceAspectRatio,
+            resolution = selectedResolution,
+            frameRate = selectedFrameRate,
+            sourcePixelSize = sourcePixelSize,
+        )
     }
     val progress = state.exportProgress
     val lastExport = state.lastExport
@@ -209,6 +221,8 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
                         PillButton("分享", onClick = { host.shareFile(result.outputUri) }, icon = Icons.Outlined.Share, compact = true)
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                PillButton("重新导出", onClick = { state.clearExportResult() }, variant = PillVariant.Ghost, compact = true)
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     PillButton(
