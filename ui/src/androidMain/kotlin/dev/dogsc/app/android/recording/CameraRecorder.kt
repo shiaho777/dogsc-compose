@@ -51,10 +51,17 @@ class CameraRecorder(
                     .build()
                 val capture = VideoCapture.withOutput(recorder)
                 videoCapture = capture
-                val selector = if (lensFacing == 1) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                val requested = if (lensFacing == 1) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
                 cameraProvider.unbindAll()
                 lifecycleOwner.start()
-                cameraProvider.bindToLifecycle(lifecycleOwner, selector, capture)
+                runCatching {
+                    cameraProvider.bindToLifecycle(lifecycleOwner, requested, capture)
+                }.onFailure {
+                    // Tablets/emulators may expose only one lens. Recording a
+                    // usable camera is better than dropping the track.
+                    val fallback = if (lensFacing == 1) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                    cameraProvider.bindToLifecycle(lifecycleOwner, fallback, capture)
+                }
                 val options = FileOutputOptions.Builder(outputFile).build()
                 val pending = capture.output.prepareRecording(context, options)
                 recording = pending.start(ContextCompat.getMainExecutor(context)) { event ->

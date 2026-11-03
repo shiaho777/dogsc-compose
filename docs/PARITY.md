@@ -121,7 +121,7 @@ Last updated: 2026-11-03.
 
 ## Verification log
 
-- `./gradlew :core:jvmTest` — 16 tests, green.
+- `./gradlew :core:jvmTest` — 20 tests, green.
 - `./gradlew :androidApp:assembleRelease` — green.
 - Emulator (Android 15, hardware GPU): cold start 1.6 s release, 1.8 s on second run.
 - Recorded 90.78 s screen + 88.81 s system audio; project reopened with correct duration.

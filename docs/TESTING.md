@@ -47,7 +47,7 @@ Environment used: Android 15 emulator, hardware GPU (`-gpu host`), 1080×2400.
 
 ## Known verification gaps
 
-- Camera recording has not been exercised on a physical device; the emulator camera path is not representative.
+- Camera recording has not been exercised on a physical device; the emulator exposes only one lens, so the front-camera fallback was exercised instead of a real front-camera session.
 - Touch capture depends on an accessibility service; click/scroll capture is implemented, continuous motion is not.
 - 4K export and hour-long recordings have not been profiled.
 - Multi-window/tablet layout has not been visually verified on a tablet.
