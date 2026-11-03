@@ -84,6 +84,9 @@ class DogScAppState(
 
     var session by mutableStateOf<EditorSession?>(null)
         private set
+
+    /** EditorSession lives in core and is not snapshot-aware; bump this after every mutation so Compose recomposes. */
+    private var sessionRevision by mutableStateOf(0L)
     var loadedProject by mutableStateOf<LoadedProject?>(null)
         private set
     var previewFrame by mutableStateOf<ImageBitmap?>(null)
@@ -133,9 +136,9 @@ class DogScAppState(
     var lastExport by mutableStateOf<ExportResult?>(null)
         private set
 
-    val project: RecorderProject? get() = session?.project
-    val sourceDuration: Double get() = session?.sourceDuration ?: 0.0
-    val outputDuration: Double get() = session?.outputDuration ?: 0.0
+    val project: RecorderProject? get() = sessionRevision.let { session?.project }
+    val sourceDuration: Double get() = sessionRevision.let { session?.sourceDuration ?: 0.0 }
+    val outputDuration: Double get() = sessionRevision.let { session?.outputDuration ?: 0.0 }
     val pointerEvents: List<dev.dogsc.core.model.PointerEventRecord>
         get() = loadedProject?.pointerEvents ?: emptyList()
     val sourceAspectRatio: Double
@@ -157,9 +160,9 @@ class DogScAppState(
             return project.canvas.resolvedFixedAspectRatio
                 ?: (sourceAspectRatio * project.canvas.crop.width / project.canvas.crop.height)
         }
-    val canUndo: Boolean get() = session?.canUndo == true
-    val canRedo: Boolean get() = session?.canRedo == true
-    val isDirty: Boolean get() = session?.isDirty == true
+    val canUndo: Boolean get() = sessionRevision.let { session?.canUndo == true }
+    val canRedo: Boolean get() = sessionRevision.let { session?.canRedo == true }
+    val isDirty: Boolean get() = sessionRevision.let { session?.isDirty == true }
 
     fun refreshScenePresets() {
         scope.launch {
@@ -419,6 +422,7 @@ class DogScAppState(
             val saved = platform.saveProject(project)
             if (saved) {
                 session?.markSaved()
+                sessionRevision++
                 refreshProjects()
                 if (showConfirmation) showToast("项目已保存")
             } else {
@@ -429,7 +433,14 @@ class DogScAppState(
 
     fun updateProject(label: String, transform: (RecorderProject) -> RecorderProject?) {
         val session = session ?: return
-        if (session.commit(label, transform)) {
+        val committed = try {
+            session.commit(label, transform)
+        } catch (error: dev.dogsc.core.model.ProjectValidationException) {
+            showToast(error.message ?: "操作无效", isError = true)
+            false
+        }
+        if (committed) {
+            sessionRevision++
             onProjectChanged()
         }
     }
@@ -482,6 +493,7 @@ class DogScAppState(
 
     fun undo() {
         if (session?.undo() == true) {
+            sessionRevision++
             onProjectChanged()
             showToast("已撤销")
         }
@@ -489,6 +501,7 @@ class DogScAppState(
 
     fun redo() {
         if (session?.redo() == true) {
+            sessionRevision++
             onProjectChanged()
             showToast("已重做")
         }
