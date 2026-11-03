@@ -21,7 +21,7 @@ Last updated: 2026-11-03.
 | Recording markers | Marker button/notification/overlay, persisted and shown on timeline | Done | `RecordingMarker` + marker sheet |
 | Floating recorder controls | `TYPE_APPLICATION_OVERLAY` with `FLAG_SECURE`, draggable pill | Done | Excluded from capture; notification fallback when overlay permission is denied |
 | Recording memo/teleprompter | Not implemented | Gap | |
-| Crash recovery journal | Not implemented | Gap | Project JSON is saved atomically after a normal stop |
+| Crash recovery journal | Preliminary project JSON is written at recording start; an interrupted recording appears in the library and can be opened | Partial | Basic recovery; pause/marker state is finalized only on normal stop |
 
 ## Primary editing
 
@@ -49,7 +49,7 @@ Last updated: 2026-11-03.
 | Sticker track | Clips with timing and layer order | Done | |
 | Markers | Ruler lines + list/jump/delete | Done | |
 | Snapping | Boundary snapping with 7 px threshold | Done | Toggle state exists; UI toggle is implicit |
-| Timeline zoom | +/- and fit buttons | Partial | Pinch gesture not implemented |
+| Timeline zoom | +/- / fit buttons and two-finger pinch | Partial | Pinch implemented; not yet verified with multi-touch input |
 | Hover preview | Playhead scrubbing updates the preview; no separate hover mode | Partial | Touch platform substitute; no pointer hover | |
 | Multi-select | Not implemented | Gap | |
 | Cut-boundary restore affordance | Menu action at playhead | Partial | No hover/right-click affordance |

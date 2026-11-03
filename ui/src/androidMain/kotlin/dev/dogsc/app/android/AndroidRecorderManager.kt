@@ -283,8 +283,12 @@ internal class RecordingCoordinator(
     private var cameraRunning = false
     private var stopping = false
     private var rawDuration = 0.0
+    private val projectTitle = "录制 " + SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
 
     fun start() {
+        scope.launch(Dispatchers.IO) {
+            runCatching { repository.saveProject(preliminaryProject()) }
+        }
         runCatching {
             screenRecorder = ScreenRecorder(projection, width, height, densityDpi, options.frameRate, screenFile).also { it.start() }
         }.onFailure {
@@ -425,6 +429,32 @@ internal class RecordingCoordinator(
         onState(RecorderUiState())
     }
 
+    private fun preliminaryProject(): RecorderProject = RecorderProject(
+        id = projectId,
+        title = projectTitle,
+        createdAtEpochMs = System.currentTimeMillis(),
+        capture = CaptureConfiguration(
+            source = CaptureSource.DISPLAY,
+            captureFrameRate = if (options.frameRate == 30) dev.dogsc.core.model.OutputFrameRate.FPS_30 else dev.dogsc.core.model.OutputFrameRate.FPS_60,
+            recordsSystemAudio = options.systemAudio,
+            recordsMicrophone = options.microphone,
+            recordsCamera = options.camera,
+            recordsTouch = options.touchCapture,
+        ),
+        audio = dev.dogsc.core.model.AudioStyle(systemVolume = 1.0, microphoneVolume = 1.0),
+        media = ProjectMediaManifest(
+            screen = ProjectMediaReference(
+                relativePath = "media/screen.mp4",
+                pixelWidth = width,
+                pixelHeight = height,
+            ),
+            camera = if (options.camera) ProjectMediaReference(relativePath = "media/camera.mp4") else null,
+            microphone = if (options.microphone) ProjectMediaReference(relativePath = "media/microphone.m4a") else null,
+            systemAudio = if (options.systemAudio) ProjectMediaReference(relativePath = "media/system.m4a") else null,
+            pointerEvents = if (options.touchCapture) ProjectMediaReference(relativePath = "media/pointer.jsonl") else null,
+        ),
+    )
+
     private suspend fun finalizeProject() {
         try {
             val segments = buildSegments(rawDuration)
@@ -459,7 +489,7 @@ internal class RecordingCoordinator(
             )
             val project = RecorderProject(
                 id = projectId,
-                title = "录制 " + SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date()),
+                title = projectTitle,
                 createdAtEpochMs = System.currentTimeMillis(),
                 capture = CaptureConfiguration(
                     source = CaptureSource.DISPLAY,

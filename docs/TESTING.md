@@ -24,6 +24,7 @@ Core tests (`core/src/commonTest`) cover:
 - playback-rate output clock and auxiliary media plan
 - 3D quad corner mapping
 - primary segment reordering
+- export range/trim math (manual runtime)
 
 The Android release build also compiles the NDK color-conversion library for all four ABIs.
 

@@ -3,6 +3,7 @@ package dev.dogsc.app.ui.editor
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -348,6 +349,27 @@ private fun TimelineCanvas(
 
     Canvas(
         modifier = modifier
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    var lastDistance = 0f
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.size >= 2) {
+                            val distance = (pressed[0].position - pressed[1].position).getDistance()
+                            if (lastDistance > 0f && distance > 0f) {
+                                val factor = (distance / lastDistance).coerceIn(0.8f, 1.25f)
+                                state.timelinePixelsPerSecond =
+                                    (state.timelinePixelsPerSecond * factor).coerceIn(4f, 400f)
+                            }
+                            lastDistance = distance
+                            event.changes.forEach { it.consume() }
+                        } else {
+                            lastDistance = 0f
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            }
             .pointerInput(project, state.timelinePixelsPerSecond, state.snappingEnabled) {
                 val density = this
                 detectTapGestures { offset ->
