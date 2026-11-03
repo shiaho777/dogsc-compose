@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import dev.dogsc.app.platform.DogScHost
 import dev.dogsc.app.ui.editor.EditorScreen
 import dev.dogsc.app.ui.library.LibraryScreen
+import dev.dogsc.app.ui.onboarding.OnboardingScreen
 import dev.dogsc.app.ui.record.RecordSetupScreen
 import dev.dogsc.app.ui.record.RecordingScreen
 import dev.dogsc.app.ui.settings.SettingsScreen
@@ -88,7 +89,9 @@ fun DogScApp(host: DogScHost) {
 
     DogScTheme {
         Box(Modifier.fillMaxSize().background(DogScColors.Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
-            when (val screen = state.screen) {
+            if (state.showOnboarding) {
+                OnboardingScreen(state = state, host = host)
+            } else when (val screen = state.screen) {
                 AppScreen.Library -> LibraryScreen(
                     state = state,
                     host = host,

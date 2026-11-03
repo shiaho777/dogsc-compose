@@ -28,6 +28,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -68,6 +69,8 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
     }
     var selectedResolution by remember { mutableStateOf(project.exportSettings.resolution) }
     var selectedFrameRate by remember { mutableStateOf(project.exportSettings.frameRate) }
+    var trimStart by remember { mutableStateOf(0f) }
+    var trimEnd by remember { mutableStateOf(state.outputDuration.toFloat()) }
     val estimate = remember(selectedResolution, selectedFrameRate, project, state.outputDuration) {
         ExportEstimator.estimate(project, state.outputDuration, state.sourceAspectRatio)
     }
@@ -219,7 +222,12 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
                                             frameRate = selectedFrameRate,
                                         )
                                     }
-                                    state.startExport(uri, audioOnly)
+                                    state.startExport(
+                                        uri,
+                                        audioOnly,
+                                        trimStart.toDouble(),
+                                        trimEnd.toDouble(),
+                                    )
                                 }
                             }
                         },

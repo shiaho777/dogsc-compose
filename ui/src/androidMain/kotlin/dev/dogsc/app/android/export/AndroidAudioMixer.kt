@@ -10,6 +10,7 @@ import dev.dogsc.core.model.MediaTimelinePlacement
 import dev.dogsc.core.model.ProjectMediaReference
 import dev.dogsc.core.model.RecorderProject
 import dev.dogsc.core.model.TimelineMap
+import dev.dogsc.core.model.TimelineMediaPlan
 import java.io.File
 import java.io.FileOutputStream
 import android.util.Log
@@ -39,6 +40,8 @@ class AndroidAudioMixer(
         timelineMap: TimelineMap,
         output: File,
         onProgress: (ExportProgress) -> Unit,
+        trimStart: Double = 0.0,
+        trimEnd: Double? = null,
     ): Boolean {
         val dir = repository.projectDirectory(project.id)
         val sources = mutableListOf<AudioSource>()
@@ -58,7 +61,8 @@ class AndroidAudioMixer(
                     sourceAvailableDuration = track.durationSeconds,
                     timelineDuration = sourceDuration,
                 )
-                sources += AudioSource(track, true) { time -> placement.sourceTimeAt(time) }
+                val plan = TimelineMediaPlan.auxiliary(timelineMap, placement)
+                sources += AudioSource(track, true) { time -> plan.sourceTimeAtOutput(time) }
             }
         } else if (screenFile != null && screenFile.exists()) {
             val track = runCatching { PcmTrack(screenFile) }.getOrNull()
@@ -74,7 +78,8 @@ class AndroidAudioMixer(
                     sourceAvailableDuration = track.durationSeconds,
                     timelineDuration = sourceDuration,
                 )
-                sources += AudioSource(track, false) { time -> placement.sourceTimeAt(time) }
+                val plan = TimelineMediaPlan.auxiliary(timelineMap, placement)
+                sources += AudioSource(track, false) { time -> plan.sourceTimeAtOutput(time) }
             }
         }
         if (sources.isEmpty()) return false
@@ -82,8 +87,12 @@ class AndroidAudioMixer(
         // Fast path: one untouched source can be copied without decode/re-encode.
         val singleIsSystem = systemFile?.exists() == true || microphoneFile?.exists() != true
         val singleIsAudible = if (singleIsSystem) !project.audio.isSystemMuted else !project.audio.isMicrophoneMuted
+        val simplePrimary = timelineMap.segments.size == 1 &&
+            timelineMap.segments[0].sourceStart < 0.001 &&
+            kotlin.math.abs(timelineMap.segments[0].playbackRate - 1.0) < 0.001
         if (sources.size == 1 &&
             singleIsAudible &&
+            simplePrimary &&
             project.timeline.primarySegmentAudioOverrides.isEmpty() &&
             project.audio.systemVolume >= 0.999 &&
             project.audio.microphoneVolume >= 0.999
@@ -95,7 +104,7 @@ class AndroidAudioMixer(
                 else -> null
             }
             if (sourceFile != null) {
-                val copied = runCatching { copyAudioTrack(sourceFile, output) }.getOrDefault(false)
+                val copied = runCatching { copyAudioTrack(sourceFile, output, trimStart, trimEnd) }.getOrDefault(false)
                 if (copied) {
                     Log.d("DogSCAudio", "copied audio track size=${output.length()}")
                     return true
@@ -105,7 +114,9 @@ class AndroidAudioMixer(
 
         val duration = timelineMap.outputDuration
         if (duration <= 0.01) return false
-        val totalFrames = (duration * outputSampleRate).roundToInt().coerceAtLeast(1)
+        val startTime = trimStart.coerceIn(0.0, (duration - 0.01).coerceAtLeast(0.0))
+        val endTime = (trimEnd ?: duration).coerceIn((startTime + 0.01).coerceAtMost(duration), duration)
+        val totalFrames = ((endTime - startTime) * outputSampleRate).roundToInt().coerceAtLeast(1)
         val chunkFrames = outputSampleRate // one second
         val wavFile = File(output.parentFile, output.nameWithoutExtension + ".wav")
         val mixBuffer = FloatArray(chunkFrames * outputChannels)
@@ -117,7 +128,7 @@ class AndroidAudioMixer(
             while (written < totalFrames) {
                 val frames = min(chunkFrames, totalFrames - written)
                 java.util.Arrays.fill(mixBuffer, 0f)
-                val time = written.toDouble() / outputSampleRate
+                val time = startTime + written.toDouble() / outputSampleRate
                 for (source in sources) {
                     val sourceTime = source.sourceTimeAt(time)
                     if (sourceTime == null) continue
@@ -163,7 +174,7 @@ class AndroidAudioMixer(
         return system to mic
     }
 
-    private fun copyAudioTrack(source: File, output: File): Boolean {
+    private fun copyAudioTrack(source: File, output: File, trimStart: Double, trimEnd: Double?): Boolean {
         val extractor = MediaExtractor()
         val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         try {
@@ -180,16 +191,24 @@ class AndroidAudioMixer(
             } else 1 shl 16
             val buffer = ByteBuffer.allocateDirect(maxSize.coerceAtLeast(1 shl 16))
             val info = MediaCodec.BufferInfo()
+            val startUs = (trimStart * 1_000_000).toLong()
+            val endUs = ((trimEnd ?: Double.MAX_VALUE) * 1_000_000).toLong()
+            var wrote = false
             while (true) {
                 buffer.clear()
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break
-                info.set(0, size, extractor.sampleTime, extractor.sampleFlags)
-                muxer.writeSampleData(outTrack, buffer, info)
+                val sampleUs = extractor.sampleTime
+                if (sampleUs >= endUs) break
+                if (sampleUs >= startUs) {
+                    info.set(0, size, sampleUs - startUs, extractor.sampleFlags)
+                    muxer.writeSampleData(outTrack, buffer, info)
+                    wrote = true
+                }
                 extractor.advance()
             }
             muxer.stop()
-            return output.length() > 0
+            return wrote && output.length() > 0
         } finally {
             runCatching { muxer.release() }
             runCatching { extractor.release() }

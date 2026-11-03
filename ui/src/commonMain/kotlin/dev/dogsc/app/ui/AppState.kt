@@ -75,6 +75,7 @@ class DogScAppState(
     var isLoadingProjects by mutableStateOf(true)
         private set
     var toast by mutableStateOf<ToastMessage?>(null)
+    var showOnboarding by mutableStateOf(!platform.hasSeenOnboarding())
         private set
     var isBusy by mutableStateOf(false)
         private set
@@ -117,6 +118,7 @@ class DogScAppState(
     var isTimelineExpanded by mutableStateOf(true)
     var showWaveform by mutableStateOf(false)
     var waveform by mutableStateOf<FloatArray?>(null)
+    var filmstripFrames by mutableStateOf<List<ImageBitmap>>(emptyList())
     private var waveformJob: Job? = null
     var hiddenTracks by mutableStateOf<Set<String>>(emptySet())
     var recordingOptions by mutableStateOf(RecordingOptions())
@@ -212,6 +214,15 @@ class DogScAppState(
         }
     }
 
+    fun finishOnboarding() {
+        platform.markOnboardingSeen()
+        showOnboarding = false
+    }
+
+    fun reopenOnboarding() {
+        showOnboarding = true
+    }
+
     fun openLibrary() {
         stopPlayback()
         screen = AppScreen.Library
@@ -257,6 +268,8 @@ class DogScAppState(
             screen = AppScreen.Editor(loaded.project.id)
             requestPreviewFrame(0.0)
             waveform = null
+            filmstripFrames = emptyList()
+            scope.launch { filmstripFrames = platform.loadFilmstrip(loaded.project, 12) }
         }
     }
 
@@ -395,6 +408,8 @@ class DogScAppState(
         selection = EditorSelection.None
         screen = AppScreen.Editor(loaded.project.id)
         requestPreviewFrame(0.0)
+        filmstripFrames = emptyList()
+        scope.launch { filmstripFrames = platform.loadFilmstrip(loaded.project, 12) }
         refreshProjects()
     }
 
@@ -670,6 +685,25 @@ class DogScAppState(
         }
     }
 
+    fun setPrimaryPlaybackRate(segmentId: String, rate: Double) {
+        updateProject("调整片段速度") {
+            TimelineEditor.setPlaybackRate(it, sourceDuration, segmentId, rate)
+        }
+    }
+
+    fun updatePrimaryAudio(
+        segmentId: String,
+        transform: (dev.dogsc.core.model.PrimarySegmentAudioOverrides) -> dev.dogsc.core.model.PrimarySegmentAudioOverrides,
+    ) {
+        val current = project ?: return
+        val existing = current.timeline.primarySegmentAudioOverrides[segmentId]
+            ?: dev.dogsc.core.model.PrimarySegmentAudioOverrides()
+        val next = transform(existing)
+        updateProject("调整片段声音") {
+            TimelineEditor.updatePrimaryAudioOverride(it, segmentId, next)
+        }
+    }
+
     fun addMarkerAtPlayhead() {
         val project = project ?: return
         val map = TimelineEditor.timelineMap(project, sourceDuration)
@@ -807,7 +841,7 @@ class DogScAppState(
         }
     }
 
-    fun startExport(outputUri: String, audioOnly: Boolean = false) {
+    fun startExport(outputUri: String, audioOnly: Boolean = false, trimStart: Double = 0.0, trimEnd: Double? = null) {
         val project = project ?: return
         exportJob?.cancel()
         lastExport = null
@@ -819,6 +853,8 @@ class DogScAppState(
                     sourceDuration = sourceDuration,
                     outputUri = outputUri,
                     audioOnly = audioOnly,
+                    trimStart = trimStart,
+                    trimEnd = trimEnd,
                 ),
             ) { progress ->
                 scope.launch { exportProgress = progress }

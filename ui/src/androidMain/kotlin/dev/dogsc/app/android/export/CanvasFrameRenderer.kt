@@ -181,14 +181,17 @@ class CanvasFrameRenderer(
             DynamicBackgroundPreset.STARFIELD_DOTS -> intArrayOf(Color.rgb(10, 12, 20), Color.rgb(26, 30, 44), Color.rgb(7, 8, 12))
             DynamicBackgroundPreset.AURORA_FLUID -> intArrayOf(Color.rgb(10, 27, 51), Color.rgb(44, 95, 138), Color.rgb(231, 238, 245))
         }
-        fill.shader = LinearGradient(0f, 0f, width.toFloat(), height.toFloat(), colors, null, Shader.TileMode.CLAMP)
+        val phase = scene.time.toFloat()
+        val driftX = kotlin.math.sin(phase * 0.18f) * width * 0.05f
+        val driftY = kotlin.math.cos(phase * 0.14f) * height * 0.04f
+        fill.shader = LinearGradient(driftX, driftY, width + driftX, height + driftY, colors, null, Shader.TileMode.CLAMP)
         outputCanvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
         fill.shader = null
         if (preset == DynamicBackgroundPreset.STARFIELD_DOTS) {
             fill.color = Color.argb(70, 255, 255, 255)
             for (i in 0 until 100) {
-                val x = ((i * 73) % 997) / 997f * width
-                val y = ((i * 151) % 991) / 991f * height
+                val x = (((i * 73 + phase * 9) % 997) / 997f) * width
+                val y = (((i * 151 + phase * 4) % 991) / 991f) * height
                 outputCanvas.drawCircle(x, y, 0.7f + (i % 3) * 0.6f, fill)
             }
         } else {

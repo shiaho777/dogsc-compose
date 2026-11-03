@@ -532,20 +532,32 @@ private fun TimelineCanvas(
                     Size(max(right - left, 2f), bottom - top),
                     CornerRadius(7f),
                 )
-                val frame = state.previewFrame
-                if (frame != null) {
+                val filmstrip = state.filmstripFrames
+                val fallback = state.previewFrame
+                if (filmstrip.isNotEmpty() || fallback != null) {
                     var x = left
                     while (x < right) {
-                        val tileWidth = (bottom - top) * frame.width / frame.height
-                        drawImage(
-                            image = frame,
-                            dstOffset = androidx.compose.ui.unit.IntOffset(x.toInt(), top.toInt()),
-                            dstSize = androidx.compose.ui.unit.IntSize(
-                                max(tileWidth.toInt(), 1),
-                                max((bottom - top).toInt(), 1),
-                            ),
-                            alpha = 0.9f,
-                        )
+                        val tileWidth = (bottom - top) * 16f / 9f
+                        val tileTime = segmentStart + ((x - left) / max(right - left, 1f)) * (segmentEnd - segmentStart)
+                        val sourceTime = TimelineEditor.timelineMap(project, state.sourceDuration)
+                            .sourceTimeAtOutput(tileTime) ?: tileTime
+                        val sourceFraction = (sourceTime / max(state.sourceDuration, 0.01)).coerceIn(0.0, 0.999)
+                        val image = if (filmstrip.isNotEmpty()) {
+                            filmstrip[(sourceFraction * filmstrip.size).toInt().coerceIn(0, filmstrip.lastIndex)]
+                        } else {
+                            fallback
+                        }
+                        if (image != null) {
+                            drawImage(
+                                image = image,
+                                dstOffset = androidx.compose.ui.unit.IntOffset(x.toInt(), top.toInt()),
+                                dstSize = androidx.compose.ui.unit.IntSize(
+                                    max(tileWidth.toInt(), 1),
+                                    max((bottom - top).toInt(), 1),
+                                ),
+                                alpha = 0.9f,
+                            )
+                        }
                         x += tileWidth
                     }
                 }

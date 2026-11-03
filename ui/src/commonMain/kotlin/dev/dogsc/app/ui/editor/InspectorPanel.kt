@@ -1778,6 +1778,42 @@ private fun AudioInspector(state: DogScAppState) {
     }
     val primary = state.selection as? EditorSelection.Primary
     if (primary != null) {
+        val segment = TimelineEditor.segments(project, state.sourceDuration)
+            .firstOrNull { it.id == primary.segmentId }
+        InspectorSection("片段速度") {
+            if (segment == null) {
+                Text("当前片段使用完整录制，先分割或裁切后才能单独变速。", color = DogScColors.TertiaryText, style = MaterialTheme.typography.bodySmall)
+            } else {
+                LabeledSlider(
+                    "播放速度",
+                    segment.playbackRate.toFloat(),
+                    1f..100f,
+                    { value -> state.setPrimaryPlaybackRate(segment.id, value.toDouble()) },
+                    valueLabel = { "${(it * 10).roundToInt() / 10.0}×" },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    listOf(1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 100.0).forEach { rate ->
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(if (kotlin.math.abs(segment.playbackRate - rate) < 0.05) DogScColors.SelectionWash else Color.Transparent)
+                                .border(1.dp, DogScColors.Hairline, RoundedCornerShape(7.dp))
+                                .clickable { state.setPrimaryPlaybackRate(segment.id, rate) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                if (rate == rate.toInt().toDouble()) "${rate.toInt()}×" else "${rate}×",
+                                color = DogScColors.PrimaryText,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+                SubLabel("动画轨道保持在输出时间上；预览与导出共用同一时间映射。")
+            }
+        }
         InspectorSection("片段声音") {
             val overrides = project.timeline.primarySegmentAudioOverrides[primary.segmentId]
             Text(
@@ -1786,6 +1822,33 @@ private fun AudioInspector(state: DogScAppState) {
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(8.dp))
+            ToggleRow(
+                "系统声音",
+                "仅作用于这个片段",
+                !(overrides?.isSystemMuted ?: project.audio.isSystemMuted),
+                { value -> state.updatePrimaryAudio(primary.segmentId) { it.copy(isSystemMuted = !value) } },
+            )
+            LabeledSlider(
+                "系统声音音量",
+                (overrides?.systemVolume ?: project.audio.systemVolume).toFloat(),
+                0f..1f,
+                { value -> state.updatePrimaryAudio(primary.segmentId) { it.copy(systemVolume = value.toDouble()) } },
+                valueLabel = { "${(it * 100).roundToInt()}%" },
+            )
+            ToggleRow(
+                "麦克风",
+                "仅作用于这个片段",
+                !(overrides?.isMicrophoneMuted ?: project.audio.isMicrophoneMuted),
+                { value -> state.updatePrimaryAudio(primary.segmentId) { it.copy(isMicrophoneMuted = !value) } },
+                enabled = project.media?.microphone != null,
+            )
+            LabeledSlider(
+                "麦克风音量",
+                (overrides?.microphoneVolume ?: project.audio.microphoneVolume).toFloat(),
+                0f..1f,
+                { value -> state.updatePrimaryAudio(primary.segmentId) { it.copy(microphoneVolume = value.toDouble()) } },
+                valueLabel = { "${(it * 100).roundToInt()}%" },
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PillButton("恢复继承", onClick = {
                     state.updateProject("恢复片段声音继承") {

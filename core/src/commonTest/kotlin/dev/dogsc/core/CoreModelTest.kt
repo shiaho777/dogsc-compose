@@ -276,3 +276,39 @@ class ProjectionAndTimelinePlanTest {
         assertEquals(0.0, atEnd?.visibility ?: 0.0, 0.05)
     }
 }
+
+class SpeedAndAuxiliaryPlanTest {
+    @Test
+    fun playbackRateChangesOutputClockAndMapsAuxiliaryTrack() {
+        val project = RecorderProject()
+        val split = dev.dogsc.core.editor.TimelineEditor.splitPrimary(project, 10.0, 4.0)!!
+        val firstId = (split.timeline.sourceSequence as dev.dogsc.core.model.SourceSequence.Edited).segments.first().id
+        val fast = dev.dogsc.core.editor.TimelineEditor.setPlaybackRate(split, 10.0, firstId, 2.0)!!
+        val map = dev.dogsc.core.editor.TimelineEditor.timelineMap(fast, 10.0)
+        assertEquals(8.0, map.outputDuration, 0.0001)
+        assertEquals(2.0, map.sourceTimeAtOutput(1.0)!!, 0.0001)
+        assertEquals(4.0, map.sourceTimeAtOutput(2.0)!!, 0.0001)
+
+        val placement = dev.dogsc.core.model.MediaTimelinePlacement(
+            timelineStart = 0.0,
+            sourceStart = 0.0,
+            playableDuration = 10.0,
+            sourceTimeScale = 1.0,
+        )
+        val plan = dev.dogsc.core.model.TimelineMediaPlan.auxiliary(map, placement)
+        assertEquals(2.0, plan.sourceTimeAtOutput(1.0)!!, 0.0001)
+        assertEquals(5.0, plan.sourceTimeAtOutput(3.0)!!, 0.0001)
+    }
+
+    @Test
+    fun projectedQuadMapsCornerToCorner() {
+        val rect = dev.dogsc.core.model.CompositionRect(0.0, 0.0, 100.0, 100.0)
+        val quad = dev.dogsc.core.scene.ScreenProjection.project(rect, 10.0, -20.0, 0.0, 0.8)
+        val topLeft = quad.project(dev.dogsc.core.model.CompositionPoint(0.0, 0.0), rect)!!
+        assertEquals(quad.topLeft.x, topLeft.x, 0.0001)
+        assertEquals(quad.topLeft.y, topLeft.y, 0.0001)
+        val bottomRight = quad.project(dev.dogsc.core.model.CompositionPoint(100.0, 100.0), rect)!!
+        assertEquals(quad.bottomRight.x, bottomRight.x, 0.0001)
+        assertEquals(quad.bottomRight.y, bottomRight.y, 0.0001)
+    }
+}

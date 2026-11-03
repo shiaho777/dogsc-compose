@@ -169,6 +169,7 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                     PillButton("GitHub", onClick = { host.openUrl("https://github.com/laogou717/dogsc") }, icon = Icons.Outlined.OpenInNew, variant = PillVariant.Ghost, compact = true)
                 }
                 HairlineDivider()
+                PillButton("重看首次引导", onClick = { state.reopenOnboarding() }, variant = PillVariant.Ghost, compact = true)
                 Text(
                     "本应用是独立重制版本，保留上游版权、许可证与归属说明。字体为阿里巴巴普惠体 3.0，按其自身许可随附。",
                     color = DogScColors.TertiaryText,

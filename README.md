@@ -95,12 +95,13 @@ This is an honest status list, not a completion claim. See [PARITY.md](docs/PARI
 
 - Export is currently a CPU Canvas renderer. It produces correct 1080p/30 output on the test device, but a 12-second clip takes roughly 45–60 seconds to encode; 4K and long recordings need a GPU renderer.
 - Preview uses Compose for 2D and a `graphicsLayer` approximation for screen 3D; export uses the exact homography. They can differ slightly at extreme angles.
-- Camera recording is implemented with CameraX but has not yet been verified on a physical device in this environment.
+- Camera recording is implemented with CameraX and a single-lens fallback, but has not yet been verified on a physical device in this environment.
 - Continuous pointer motion is limited by what the accessibility service exposes; the cursor track is click/scroll-based unless a platform provides motion events.
-- Per-segment audio overrides are modeled and displayed, but the editor currently only restores inheritance; it does not yet expose every per-segment slider.
 - The PCM audio mixer is used when volume/mix settings cannot take the fast copy path; it is slower than the copy path and needs optimization.
-- Importing an upstream macOS `.dogsc` project package, onboarding tour, memo/teleprompter, multi-select timeline edits, keyboard shortcuts, and iOS/desktop targets are not implemented yet.
+- Screen 3D preview uses a `graphicsLayer` approximation while export uses the exact homography; extreme angles can differ.
+- Importing an upstream macOS `.dogsc` project package, memo/teleprompter, multi-select timeline edits, pinch zoom, hover preview, physical keyboard shortcuts, and iOS/desktop targets are not implemented yet.
 - The app is Chinese-only at present; upstream's English localization is not ported yet.
+- The core suite currently has 18 tests; UI/instrumentation coverage is still manual.
 
 ## License
 

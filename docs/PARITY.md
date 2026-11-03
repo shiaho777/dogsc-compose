@@ -32,15 +32,15 @@ Last updated: 2026-11-03.
 | Ripple delete | `deletePrimaryRange` | Done | Core split/delete test |
 | Restore cuts | Restore one gap or all cuts | Done | Core restore test |
 | Reorder primary segments | Not exposed | Gap | Model supports reorder through `SourceSequence.Edited` |
-| Speed 1×–100× | Model supports `playbackRate` | Partial | No inspector slider yet |
+| Speed 1×–100× | Per-segment slider + presets; timeline map retimes video and auxiliary tracks | Done | Core speed/auxiliary plan test; UI controls in primary inspector |
 | Undo/redo | Bounded snapshot stack; all editor commands go through `EditorSession` | Done | UI buttons + labels |
-| Per-segment audio overrides | Model + inheritance display | Partial | No per-segment sliders yet |
+| Per-segment audio overrides | System/mic mute + volume per primary segment, restore inheritance | Done | UI in primary inspector; mixer honors overrides |
 
 ## Timeline
 
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
-| Filmstrip | Repeats decoded preview frames across primary track | Partial | Uses one real frame; no thumbnail strip cache yet |
+| Filmstrip | 12 cached source frames, mapped through timeline cuts/retime | Done | `loadFilmstrip` + timeline drawing |
 | Waveform | Decodes AAC/PCM to 700 peaks; toggle in timeline | Done | Real peaks aligned through `TimelineMap` |
 | Zoom track | Mint clips, move/resize/select | Done | |
 | Screen 3D track | Clips with timing | Done | |
@@ -50,7 +50,7 @@ Last updated: 2026-11-03.
 | Markers | Ruler lines + list/jump/delete | Done | |
 | Snapping | Boundary snapping with 7 px threshold | Done | Toggle state exists; UI toggle is implicit |
 | Timeline zoom | +/- and fit buttons | Partial | Pinch gesture not implemented |
-| Hover preview | Not implemented | Gap | |
+| Hover preview | Playhead scrubbing updates the preview; no separate hover mode | Partial | Touch platform substitute; no pointer hover | |
 | Multi-select | Not implemented | Gap | |
 | Cut-boundary restore affordance | Menu action at playhead | Partial | No hover/right-click affordance |
 | Keyboard shortcuts | Reference sheet only | Partial | No physical keyboard handling yet |
@@ -63,8 +63,8 @@ Last updated: 2026-11-03.
 | Manual zoom | Add clip, scale/focus/easing/enter/exit | Done | |
 | Spring/easing curves | Linear/quadratic/cubic/quintic/spring/custom model | Partial | UI exposes spring/cubic/quintic/linear; custom bezier editor absent |
 | Focus effect | Radial/linear blur + dimming, animation/pointer/fixed targets | Done | Core + UI + renderer |
-| Screen 3D | Tilt X/Y, rotate Z, perspective, projection anchor | Partial | Export exact; preview `graphicsLayer` approximation |
-| Camera PiP motion | Shape, position, size, fullscreen transition, opacity | Done | Core + UI; camera media untested |
+| Screen 3D | Tilt X/Y, rotate Z, perspective, projection anchor | Partial | Export exact; preview uses graphicsLayer approximation; visual test at 0.7 s shows tilt |
+| Camera PiP motion | Shape, position, size, fullscreen transition, opacity | Partial | Core + UI; camera track unverified on physical device, emulator exposes one lens |
 | Opening sequence | Converge/side-slide/light-3D, duration/stagger/order/curve | Done | Core + UI + renderer |
 | Cursor styles | System arrow, hand, crosshair, I-beam, open/closed hand, not-allowed, touch dot, hidden | Done | Vector renderer |
 | Click feedback | Ripple/glow/pulse/burst, color/opacity/scale | Done | |
@@ -83,7 +83,7 @@ Last updated: 2026-11-03.
 | Padding/content position/scale | Sliders + position pad | Done | |
 | Corner/border/shadow/inset opacity | Sliders + color palette | Done | |
 | Background patterns | Five presets | Done | Canvas renderer |
-| Dynamic backgrounds | Three presets | Partial | Export/preview are static; upstream animates |
+| Dynamic backgrounds | Three presets with time-driven drift/dot motion | Done | Preview and export both read `scene.time` |
 | Custom image/video background | SAF import + cover draw | Partial | Video background decoded per frame; blur is approximate |
 | Window/browser frames | Chrome + title/address + scale/radius | Done | |
 | Phone/tablet frames | Adaptive device bezel | Done | |
@@ -103,7 +103,7 @@ Last updated: 2026-11-03.
 | Preview/export consistency | Shared `FrameScene` | Partial | 2D matches; 3D preview is approximate; GPU renderer pending |
 | Estimated size/ETA | Bitrate policy + live progress | Done | |
 | Cancel export | Volatile cancel flag + UI | Done | |
-| Export selection/trim | Not implemented | Gap | |
+| Export selection/trim | Range slider in export sheet; video/audio renderer trims and re-bases timestamps | Done | `ExportRequest.trimStart/trimEnd`, fast audio copy trims samples |
 | Long-recording performance | CPU Canvas + native YUV | Partial | ~4× realtime at 1080p30 on emulator; GL renderer required |
 
 ## Product surface
@@ -111,17 +111,22 @@ Last updated: 2026-11-03.
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
 | Project library | Grid, thumbnails, rename/duplicate/delete | Done | |
-| First-launch introduction | Not implemented | Gap | |
-| Onboarding permission tour | Not implemented | Gap | |
+| First-launch introduction | Three-page onboarding with capability and permission guidance | Done | `OnboardingScreen`; persisted first-launch flag | |
+| Onboarding permission tour | Screen/accessibility permission cards in onboarding and settings | Partial | No automatic return-state recheck tour | |
 | Settings | Capabilities, permissions, storage, about, licenses | Partial | No theme/language/recording-default settings |
 | Localization | Chinese | Partial | Upstream English strings not ported |
 | Menu/shortcut reference | Bottom sheet | Partial | No key handling |
-| Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Partial | Not visually verified on tablet |
-| iOS/desktop/web | Shared core/UI prepared; no targets yet | Gap | Android first |
+| Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Unverified | Not visually verified on tablet |
+| iOS/desktop/web | Shared core/UI prepared; no targets yet | Gap | Android first; commonMain currently has no Android imports |
+
+## Audit notes
+
+- Every **Done** row above has a core test, an emulator run, or an extracted export artifact. Rows marked Partial/Unverified are not counted as complete.
+- The first audit pass downgraded camera, 3D preview, tablet, and long-recording/4K claims that lacked direct evidence.
 
 ## Verification log
 
-- `./gradlew :core:jvmTest` — 20 tests, green.
+- `./gradlew :core:jvmTest` — 18 tests, green.
 - `./gradlew :androidApp:assembleRelease` — green.
 - Emulator (Android 15, hardware GPU): cold start 1.6 s release, 1.8 s on second run.
 - Recorded 90.78 s screen + 88.81 s system audio; project reopened with correct duration.
@@ -130,10 +135,11 @@ Last updated: 2026-11-03.
 
 ## Next gaps to close
 
-1. GPU preview/export renderer (3D, blur, performance).
-2. Physical-device camera verification and lens flip.
-3. Continuous touch motion or a documented gesture-based substitute.
-4. Per-segment audio controls and reliable PCM mixer performance.
-5. Export selection/trim and long-recording resilience.
-6. Thumbnail strip cache, pinch timeline zoom, multi-select, hover preview.
-7. Onboarding, English localization, desktop/iOS targets.
+1. GPU preview/export renderer; 3D preview/export exactness and long/4K performance.
+2. Physical-device camera verification, lens flip, and camera motion on real hardware.
+3. Continuous touch motion or a stronger gesture-based substitute; accessibility service enablement reliability.
+4. Reliable PCM mixer performance for authored multi-source volume, plus long-recording/4K stress tests.
+5. Pinch timeline zoom, multi-select, hover preview, physical keyboard handling.
+6. Reorder primary segments; cut-boundary hover/right-click affordance.
+7. Wallpaper library, English localization, tablet visual verification, iOS/desktop/web targets.
+8. Import upstream `.dogsc` project packages and crash-recovery journal.

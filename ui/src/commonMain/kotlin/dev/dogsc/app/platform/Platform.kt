@@ -94,6 +94,7 @@ interface DogScPlatform {
     suspend fun loadStickerBitmap(project: RecorderProject, relativePath: String): ImageBitmap?
     suspend fun loadBackgroundBitmap(project: RecorderProject): ImageBitmap?
     suspend fun loadWaveform(project: RecorderProject, sourceDuration: Double, buckets: Int = 600): FloatArray?
+    suspend fun loadFilmstrip(project: RecorderProject, count: Int = 12): List<ImageBitmap>
     suspend fun loadScenePresets(): List<ScenePreset>
     suspend fun saveScenePresets(presets: List<ScenePreset>)
     suspend fun loadProjectThumbnail(summary: ProjectSummary): ImageBitmap?
@@ -105,6 +106,8 @@ interface DogScPlatform {
     fun openAppSettings()
     fun openAccessibilitySettings()
     fun openUrl(url: String)
+    fun hasSeenOnboarding(): Boolean
+    fun markOnboardingSeen()
 }
 
 data class MediaProbe(

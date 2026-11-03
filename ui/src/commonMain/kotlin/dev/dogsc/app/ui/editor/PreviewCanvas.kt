@@ -719,7 +719,7 @@ private fun DrawScope.drawBackground(scene: FrameScene, bitmap: ImageBitmap?, ca
     val source = scene.background.source
     when (source) {
         is BackgroundSource.Pattern -> drawPattern(source.preset, scene.background, canvasSize)
-        is BackgroundSource.DynamicFlow -> drawDynamic(source.preset, scene.background, canvasSize)
+        is BackgroundSource.DynamicFlow -> drawDynamic(source.preset, scene.background, canvasSize, scene.time)
         else -> {
             if (bitmap != null) {
                 drawImage(
@@ -810,25 +810,29 @@ private fun DrawScope.drawDynamic(
     preset: DynamicBackgroundPreset,
     background: dev.dogsc.core.scene.FrameBackgroundScene,
     canvasSize: Size,
+    time: Double,
 ) {
     val colors = when (preset) {
         DynamicBackgroundPreset.CYBER_DRIFT_GRID -> listOf(Color(0xFF1A1206), Color(0xFF3D2A0C), Color(0xFF0B0B10))
         DynamicBackgroundPreset.STARFIELD_DOTS -> listOf(Color(0xFF0A0C14), Color(0xFF1A1E2C), Color(0xFF07080C))
         DynamicBackgroundPreset.AURORA_FLUID -> listOf(Color(0xFF0A1B33), Color(0xFF2C5F8A), Color(0xFFE7EEF5))
     }
-    drawRect(Brush.linearGradient(colors, start = Offset.Zero, end = Offset(size.width, size.height)))
+    val phase = time.toFloat()
+    val driftX = kotlin.math.sin(phase * 0.18f) * size.width * 0.05f
+    val driftY = kotlin.math.cos(phase * 0.14f) * size.height * 0.04f
+    drawRect(Brush.linearGradient(colors, start = Offset(driftX, driftY), end = Offset(size.width + driftX, size.height + driftY)))
     if (preset == DynamicBackgroundPreset.STARFIELD_DOTS) {
         val count = 90
         for (i in 0 until count) {
-            val x = ((i * 73) % 997) / 997f * size.width
-            val y = ((i * 151) % 991) / 991f * size.height
+            val x = (((i * 73 + phase * 9) % 997) / 997f) * size.width
+            val y = (((i * 151 + phase * 4) % 991) / 991f) * size.height
             val radius = 0.6f + (i % 3) * 0.5f
             drawCircle(Color.White.copy(alpha = 0.18f + (i % 5) * 0.08f), radius, Offset(x, y))
         }
     } else {
         for (i in 0 until 6) {
-            val x = ((i * 211) % 100) / 100f * size.width
-            val y = ((i * 137) % 100) / 100f * size.height
+            val x = (((i * 211) % 100) / 100f) * size.width + driftX * (i + 1) * 0.3f
+            val y = (((i * 137) % 100) / 100f) * size.height + driftY * (i + 1) * 0.25f
             drawCircle(
                 Color.White.copy(alpha = 0.035f),
                 size.minDimension * (0.18f + i * 0.05f),

@@ -69,6 +69,30 @@ class AndroidDogScPlatform(
     override suspend fun loadWaveform(project: RecorderProject, sourceDuration: Double, buckets: Int): FloatArray? =
         waveformLoader.load(project, sourceDuration, buckets)
 
+    override suspend fun loadFilmstrip(project: RecorderProject, count: Int): List<ImageBitmap> {
+        val path = project.media?.screen?.relativePath ?: return emptyList()
+        val file = File(repository.projectDirectory(project.id), path)
+        if (!file.exists()) return emptyList()
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(file.absolutePath)
+                val durationMs = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: 0L
+                if (durationMs <= 0) return@withContext emptyList()
+                (0 until count).mapNotNull { index ->
+                    val timeUs = (durationMs * 1000L * index / count.coerceAtLeast(1))
+                    retriever.getFrameAtTime(timeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?.asImageBitmap()
+                }
+            } catch (_: Throwable) {
+                emptyList()
+            } finally {
+                runCatching { retriever.release() }
+            }
+        }
+    }
+
     override suspend fun loadScenePresets(): List<ScenePreset> = repository.loadScenePresets()
 
     override suspend fun saveScenePresets(presets: List<ScenePreset>) {
@@ -113,5 +137,13 @@ class AndroidDogScPlatform(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+    }
+
+    override fun hasSeenOnboarding(): Boolean =
+        context.getSharedPreferences("dogsc_prefs", Context.MODE_PRIVATE).getBoolean("onboarding_seen", false)
+
+    override fun markOnboardingSeen() {
+        context.getSharedPreferences("dogsc_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("onboarding_seen", true).apply()
     }
 }

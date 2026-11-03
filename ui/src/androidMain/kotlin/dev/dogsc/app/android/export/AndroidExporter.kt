@@ -25,6 +25,7 @@ import dev.dogsc.core.model.ProjectPointerTrack
 import dev.dogsc.core.model.ScreenMotionTrack
 import dev.dogsc.core.model.StickerTransitionTrack
 import dev.dogsc.core.model.TimelineMap
+import dev.dogsc.core.model.TimelineMediaPlan
 import dev.dogsc.core.model.ZoomAnimationTrack
 import dev.dogsc.core.scene.FrameSceneEvaluator
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,12 @@ class AndroidExporter(
                 val timelineMap = TimelineMap(project.timeline.sourceSequence, request.sourceDuration)
                 val outputDuration = timelineMap.outputDuration
                 if (outputDuration <= 0.01) return@withContext ExportResult.Failure("当前剪辑没有可导出的时长")
+                val trimStart = request.trimStart.coerceIn(0.0, (outputDuration - 0.01).coerceAtLeast(0.0))
+                val trimEnd = (request.trimEnd ?: outputDuration).coerceIn(
+                    (trimStart + 0.01).coerceAtMost(outputDuration),
+                    outputDuration,
+                )
+                val exportDuration = (trimEnd - trimStart).coerceAtLeast(0.01)
                 val pointerEvents = repository.loadPointerEvents(project)
                 val pointerTrack = ProjectPointerTrack(timelineMap, pointerEvents)
                 val screenTrack = ScreenMotionTrack(project.timeline.screenMotionClips)
@@ -80,6 +87,7 @@ class AndroidExporter(
                         timelineDuration = request.sourceDuration,
                     )
                 }
+                val cameraPlan = cameraPlacement?.let { TimelineMediaPlan.auxiliary(timelineMap, it) }
                 val cameraAspect = cameraSource?.let { it.width.toDouble() / max(it.height, 1) }
 
                 val backgroundSource = project.canvas.backgroundSource
@@ -137,6 +145,8 @@ class AndroidExporter(
                         timelineMap,
                         tempAudio,
                         onProgress,
+                        trimStart,
+                        trimEnd,
                     )
                     if (cancelled) return@withContext ExportResult.Cancelled
                     if (!audioReady) return@withContext ExportResult.Failure("当前剪辑没有可导出的声音")
@@ -146,7 +156,7 @@ class AndroidExporter(
                     return@withContext ExportResult.Success(request.outputUri, tempAudio.length())
                 }
 
-                Log.d("DogSCExport", "video start ${outputWidth}x${outputHeight} duration=$outputDuration")
+                Log.d("DogSCExport", "video start ${outputWidth}x${outputHeight} range=$trimStart..$trimEnd duration=$exportDuration")
                 onProgress(ExportProgress(0.02f, "正在准备素材"))
                 val frameRate = project.exportSettings.frameRate.value
                 val encoder = CanvasVideoEncoder(
@@ -157,7 +167,7 @@ class AndroidExporter(
                     tempVideo,
                 )
                 val renderer = CanvasFrameRenderer(outputWidth, outputHeight)
-                val frameCount = ceil(outputDuration * frameRate).toInt().coerceAtLeast(1)
+                val frameCount = ceil(exportDuration * frameRate).toInt().coerceAtLeast(1)
                 val sourceFps = screenSource.frameRate.coerceIn(1.0, 120.0)
                 val renderFps = min(frameRate.toDouble(), sourceFps)
                 val frameStep = max(1, (frameRate / renderFps).roundToInt())
@@ -168,12 +178,12 @@ class AndroidExporter(
                 try {
                     for (index in 0 until frameCount) {
                         if (cancelled) return@withContext ExportResult.Cancelled
-                        val time = min(index.toDouble() / frameRate, outputDuration)
+                        val time = trimStart + min(index.toDouble() / frameRate, exportDuration)
                         val sourceTime = timelineMap.sourceTimeAtOutput(time)
                             ?: timelineMap.sourceTimeAtOutput(min(time, outputDuration - 0.0001))
                             ?: 0.0
                         if (lastRenderedBitmap != null && index % frameStep != 0) {
-                            encoder.encodeFrame(lastRenderedBitmap!!, (time * 1_000_000).toLong())
+                            encoder.encodeFrame(lastRenderedBitmap!!, (index.toDouble() / frameRate * 1_000_000).toLong())
                             if (index % 12 == 0) {
                                 val fraction = 0.03f + 0.82f * (index + 1) / frameCount
                                 onProgress(ExportProgress(fraction, "正在合成与编码 ${index + 1}/$frameCount"))
@@ -189,7 +199,7 @@ class AndroidExporter(
                         val decodeEnd = android.os.SystemClock.elapsedRealtime()
                         lastSourceFrame = screenBitmap
                         lastSourceTime = sourceTime
-                        val cameraTime = cameraPlacement?.sourceTimeAt(time) ?: sourceTime
+                        val cameraTime = cameraPlan?.sourceTimeAtOutput(time) ?: sourceTime
                         val cameraBitmap = cameraSource?.let { source ->
                             if (lastCameraFrame != null && absTime(cameraTime, lastCameraTime) < 0.004) {
                                 lastCameraFrame
@@ -223,7 +233,7 @@ class AndroidExporter(
                         val bitmap = renderer.render(scene, screenBitmap, cameraBitmap, background, stickerBitmaps)
                         lastRenderedBitmap = bitmap
                         val renderEnd = android.os.SystemClock.elapsedRealtime()
-                        encoder.encodeFrame(bitmap, (time * 1_000_000).toLong())
+                        encoder.encodeFrame(bitmap, (index.toDouble() / frameRate * 1_000_000).toLong())
                         val encodeEnd = android.os.SystemClock.elapsedRealtime()
                         if (index % 30 == 0) {
                             Log.d("DogSCExport", "frame $index decode=${decodeEnd - decodeStart}ms render=${renderEnd - renderStart}ms encode=${encodeEnd - renderEnd}ms")
@@ -234,7 +244,7 @@ class AndroidExporter(
                                 ExportProgress(
                                     fraction,
                                     "正在合成与编码 ${index + 1}/$frameCount",
-                                    if (index > 8) (outputDuration - time) * 0.7 else null,
+                                    if (index > 8) (trimEnd - time) * 0.7 else null,
                                 )
                             )
                         }
@@ -254,6 +264,8 @@ class AndroidExporter(
                     timelineMap,
                     tempAudio,
                     onProgress,
+                    trimStart,
+                    trimEnd,
                 )
                 if (cancelled) return@withContext ExportResult.Cancelled
 
