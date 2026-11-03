@@ -11,6 +11,7 @@ import dev.dogsc.core.model.ProjectMediaReference
 import dev.dogsc.core.model.RecorderProject
 import dev.dogsc.core.model.TimelineMap
 import dev.dogsc.core.model.TimelineMediaPlan
+import dev.dogsc.core.model.TimelineMediaSlice
 import java.io.File
 import java.io.FileOutputStream
 import android.util.Log
@@ -62,12 +63,12 @@ class AndroidAudioMixer(
                     timelineDuration = sourceDuration,
                 )
                 val plan = TimelineMediaPlan.auxiliary(timelineMap, placement)
-                sources += AudioSource(track, true) { time -> plan.sourceTimeAtOutput(time) }
+                sources += AudioSource(track, true, plan.slices)
             }
         } else if (screenFile != null && screenFile.exists()) {
             val track = runCatching { PcmTrack(screenFile) }.getOrNull()
             if (track != null) {
-                sources += AudioSource(track, true) { time -> timelineMap.sourceTimeAtOutput(time) }
+                sources += AudioSource(track, true, TimelineMediaPlan.primary(timelineMap).slices)
             }
         }
         if (microphoneFile != null && microphoneFile.exists()) {
@@ -79,7 +80,7 @@ class AndroidAudioMixer(
                     timelineDuration = sourceDuration,
                 )
                 val plan = TimelineMediaPlan.auxiliary(timelineMap, placement)
-                sources += AudioSource(track, false) { time -> plan.sourceTimeAtOutput(time) }
+                sources += AudioSource(track, false, plan.slices)
             }
         }
         if (sources.isEmpty()) return false
@@ -128,16 +129,34 @@ class AndroidAudioMixer(
             while (written < totalFrames) {
                 val frames = min(chunkFrames, totalFrames - written)
                 java.util.Arrays.fill(mixBuffer, 0f)
-                val time = startTime + written.toDouble() / outputSampleRate
+                val chunkStart = startTime + written.toDouble() / outputSampleRate
+                val chunkEnd = chunkStart + frames.toDouble() / outputSampleRate
                 for (source in sources) {
-                    val sourceTime = source.sourceTimeAt(time)
-                    if (sourceTime == null) continue
-                    source.track.readStereo(sourceTime, frames, outputSampleRate, sourceBuffer)
-                    val (systemVolume, micVolume) = volumesAt(project, timelineMap, time)
-                    val gain = (if (source.isSystem) systemVolume else micVolume).toFloat()
-                    if (gain <= 0.0001) continue
-                    for (i in 0 until frames * outputChannels) {
-                        mixBuffer[i] = mixBuffer[i] + sourceBuffer[i] * gain
+                    // Each slice is one primary segment (or part of one): constant speed and gain,
+                    // so cuts, speed changes and per-segment volume switch on the exact sample.
+                    for (slice in source.slices) {
+                        val from = max(slice.outputStart, chunkStart)
+                        val to = min(slice.outputEnd, chunkEnd)
+                        if (to <= from) continue
+                        val (systemVolume, micVolume) = volumesAt(project, timelineMap, (from + to) / 2)
+                        val gain = (if (source.isSystem) systemVolume else micVolume).toFloat()
+                        if (gain <= 0.0001f) continue
+                        var frameFrom = ((from - chunkStart) * outputSampleRate).roundToInt().coerceIn(0, frames)
+                        val frameTo = ((to - chunkStart) * outputSampleRate).roundToInt().coerceIn(frameFrom, frames)
+                        val scale = slice.sourceTimeScale
+                        // Read at most ~1 s of source per call so the decode window stays bounded at 100×.
+                        val maxPiece = max(1, (outputSampleRate / max(scale, 1.0)).toInt())
+                        while (frameFrom < frameTo) {
+                            val count = min(maxPiece, frameTo - frameFrom)
+                            val outputTime = chunkStart + frameFrom.toDouble() / outputSampleRate
+                            val sourceTime = max(slice.sourceStart + (outputTime - slice.outputStart) * scale, 0.0)
+                            source.track.readStereo(sourceTime, count, outputSampleRate, scale, sourceBuffer)
+                            val base = frameFrom * outputChannels
+                            for (i in 0 until count * outputChannels) {
+                                mixBuffer[base + i] = mixBuffer[base + i] + sourceBuffer[i] * gain
+                            }
+                            frameFrom += count
+                        }
                     }
                 }
                 val bytes = ByteArray(frames * outputChannels * 2)
@@ -318,7 +337,7 @@ class AndroidAudioMixer(
     private data class AudioSource(
         val track: PcmTrack,
         val isSystem: Boolean,
-        val sourceTimeAt: (Double) -> Double?,
+        val slices: List<TimelineMediaSlice>,
     )
 }
 
@@ -330,6 +349,7 @@ private class PcmTrack(file: File) {
     private val sourceSampleRate: Int
     private val sourceChannels: Int
     private var buffer = ShortArray(0)
+    private var bufferSize = 0
     private var bufferStartTime = 0.0
     private var bufferFrames = 0
     private var readFrame = 0
@@ -354,13 +374,19 @@ private class PcmTrack(file: File) {
         Log.d("DogSCAudio", "PcmTrack init rate=$sourceSampleRate ch=$sourceChannels dur=$durationSeconds")
     }
 
-    fun readStereo(sourceTime: Double, frames: Int, outputRate: Int, output: FloatArray) {
-        val neededEnd = sourceTime + frames.toDouble() * sourceSampleRate / outputRate
+    /** Reads [frames] output frames starting at [sourceTime], advancing [rate] source seconds per output second. */
+    fun readStereo(sourceTime: Double, frames: Int, outputRate: Int, rate: Double, output: FloatArray) {
+        val neededEnd = sourceTime + frames.toDouble() * rate / outputRate + 2.0 / sourceSampleRate
         ensureRange(sourceTime, neededEnd)
-        val startFrame = ((sourceTime - bufferStartTime) * sourceSampleRate).roundToInt().coerceAtLeast(0)
-        val step = sourceSampleRate.toDouble() / outputRate
+        val startPos = (sourceTime - bufferStartTime) * sourceSampleRate
+        val step = sourceSampleRate.toDouble() * rate / outputRate
         for (i in 0 until frames) {
-            val sourcePos = startFrame + i * step
+            val sourcePos = startPos + i * step
+            if (sourcePos < 0) {
+                output[i * 2] = 0f
+                output[i * 2 + 1] = 0f
+                continue
+            }
             val lower = sourcePos.toInt()
             val upper = min(lower + 1, bufferFrames - 1)
             val fraction = (sourcePos - lower).toFloat()
@@ -380,14 +406,16 @@ private class PcmTrack(file: File) {
     }
 
     private fun sample(index: Int): Float {
-        if (index < 0 || index >= buffer.size) return 0f
+        if (index < 0 || index >= bufferSize) return 0f
         return buffer[index] / 32768f
     }
 
     private fun ensureRange(startTime: Double, endTime: Double) {
-        if (bufferFrames <= 0 || startTime < bufferStartTime - 0.05 || startTime > bufferStartTime + 1.8) {
-            Log.d("DogSCAudio", "seek $startTime (bufferStart=$bufferStartTime frames=$bufferFrames)")
+        val bufferEnd = bufferStartTime + bufferFrames.toDouble() / sourceSampleRate
+        if (bufferFrames <= 0 || startTime < bufferStartTime - 0.002 || startTime > bufferEnd + 0.5) {
             seekTo(startTime)
+        } else {
+            dropBefore(startTime - 0.05)
         }
         var idle = 0
         while (bufferStartTime + bufferFrames.toDouble() / sourceSampleRate < endTime && !outputDone) {
@@ -407,7 +435,7 @@ private class PcmTrack(file: File) {
         val safe = max(time - 0.25, 0.0)
         extractor.seekTo((safe * 1_000_000).toLong(), MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         runCatching { codec.flush() }
-        buffer = ShortArray(0)
+        bufferSize = 0
         bufferFrames = 0
         readFrame = 0
         bufferStartTime = safe
@@ -437,7 +465,6 @@ private class PcmTrack(file: File) {
             val index = codec.dequeueOutputBuffer(bufferInfo, 2_000)
             when {
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> {
-                    if (attempts == 1) Log.d("DogSCAudio", "decoder try again inputDone=$inputDone outputDone=$outputDone")
                     return
                 }
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> Unit
@@ -459,27 +486,24 @@ private class PcmTrack(file: File) {
     }
 
     private fun append(shorts: ShortArray, startTime: Double) {
-        if (bufferFrames == 0) {
-            bufferStartTime = startTime
-            buffer = shorts.copyOf()
-            bufferFrames = shorts.size / sourceChannels
-        } else {
-            val combined = ShortArray(buffer.size + shorts.size)
-            System.arraycopy(buffer, 0, combined, 0, buffer.size)
-            System.arraycopy(shorts, 0, combined, buffer.size, shorts.size)
-            buffer = combined
-            bufferFrames += shorts.size / sourceChannels
+        if (bufferSize == 0) bufferStartTime = startTime
+        if (bufferSize + shorts.size > buffer.size) {
+            buffer = buffer.copyOf(max(buffer.size * 2, bufferSize + shorts.size))
         }
-        // Keep at most ~3 seconds to bound memory; drop consumed head.
-        Log.d("DogSCAudio", "append ${shorts.size} at $startTime bufferStart=$bufferStartTime frames=$bufferFrames")
-        val maxSamples = sourceSampleRate * sourceChannels * 3
-        if (buffer.size > maxSamples) {
-            val dropSamples = buffer.size - maxSamples
-            val dropFrames = dropSamples / sourceChannels
-            buffer = buffer.copyOfRange(dropSamples, buffer.size)
-            bufferStartTime += dropFrames.toDouble() / sourceSampleRate
-            bufferFrames = buffer.size / sourceChannels
-        }
+        System.arraycopy(shorts, 0, buffer, bufferSize, shorts.size)
+        bufferSize += shorts.size
+        bufferFrames = bufferSize / sourceChannels
+    }
+
+    /** Drops consumed head samples. Only compacts once ≥1 s is stale, so the copy cost is amortized. */
+    private fun dropBefore(time: Double) {
+        val dropFrames = ((time - bufferStartTime) * sourceSampleRate).toInt().coerceIn(0, bufferFrames)
+        if (dropFrames < sourceSampleRate) return
+        val dropSamples = dropFrames * sourceChannels
+        System.arraycopy(buffer, dropSamples, buffer, 0, bufferSize - dropSamples)
+        bufferSize -= dropSamples
+        bufferFrames = bufferSize / sourceChannels
+        bufferStartTime += dropFrames.toDouble() / sourceSampleRate
     }
 
     fun release() {
