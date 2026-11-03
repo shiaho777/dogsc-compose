@@ -1,0 +1,117 @@
+package dev.dogsc.app.android
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import dev.dogsc.app.android.export.AndroidExporter
+import dev.dogsc.app.platform.DogScPlatform
+import dev.dogsc.app.platform.ExportProgress
+import dev.dogsc.app.platform.ExportRequest
+import dev.dogsc.app.platform.ExportResult
+import dev.dogsc.app.platform.LoadedProject
+import dev.dogsc.app.platform.MediaProbe
+import dev.dogsc.app.platform.ProjectSummary
+import dev.dogsc.app.platform.ScenePreset
+import dev.dogsc.core.model.RecorderProject
+import java.io.File
+
+class AndroidDogScPlatform(
+    private val context: Context,
+    private val repository: AndroidProjectRepository,
+) : DogScPlatform {
+    private val exporter = AndroidExporter(context, repository)
+    private val waveformLoader = AndroidWaveformLoader(repository)
+
+    override val platformName: String = "Android ${Build.VERSION.RELEASE}"
+    override val supportsSystemAudio: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+    override val supportsCamera: Boolean = true
+    override val supportsTouchCapture: Boolean = true
+    override val supportsExport: Boolean = true
+    override val supportsScreenRecording: Boolean = true
+
+    override suspend fun listProjects(): List<ProjectSummary> = repository.listProjects()
+
+    override suspend fun loadProject(id: String): LoadedProject? = repository.loadProject(id)
+
+    override suspend fun saveProject(project: RecorderProject): Boolean = repository.saveProject(project)
+
+    override suspend fun deleteProject(id: String): Boolean = repository.deleteProject(id)
+
+    override suspend fun duplicateProject(id: String): Boolean = repository.duplicateProject(id)
+
+    override suspend fun renameProject(id: String, title: String): Boolean = repository.renameProject(id, title)
+
+    override suspend fun importVideo(uri: String): LoadedProject? = repository.importVideo(uri)
+
+    override suspend fun importSticker(projectId: String, uri: String): String? =
+        repository.importSticker(projectId, uri)
+
+    override suspend fun importBackground(projectId: String, uri: String, isVideo: Boolean): String? =
+        repository.importBackground(projectId, uri, isVideo)
+
+    override suspend fun loadThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? =
+        repository.loadThumbnail(project, atTime)
+
+    override suspend fun loadCameraThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? =
+        repository.loadCameraThumbnail(project, atTime)
+
+    override suspend fun loadStickerBitmap(project: RecorderProject, relativePath: String): ImageBitmap? =
+        repository.loadStickerBitmap(project, relativePath)
+
+    override suspend fun loadBackgroundBitmap(project: RecorderProject): ImageBitmap? =
+        repository.loadBackgroundBitmap(project)
+
+    override suspend fun loadWaveform(project: RecorderProject, sourceDuration: Double, buckets: Int): FloatArray? =
+        waveformLoader.load(project, sourceDuration, buckets)
+
+    override suspend fun loadScenePresets(): List<ScenePreset> = repository.loadScenePresets()
+
+    override suspend fun saveScenePresets(presets: List<ScenePreset>) {
+        repository.saveScenePresets(presets)
+    }
+
+    override suspend fun loadProjectThumbnail(summary: ProjectSummary): ImageBitmap? {
+        val path = summary.thumbnailPath ?: return null
+        val file = File(path)
+        if (!file.exists()) return null
+        return runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
+    }
+
+    override suspend fun probeMedia(project: RecorderProject): MediaProbe? = repository.probe(project)
+
+    override suspend fun export(
+        request: ExportRequest,
+        onProgress: (ExportProgress) -> Unit,
+    ): ExportResult = exporter.export(request, onProgress)
+
+    override fun cancelExport() {
+        exporter.cancel()
+    }
+
+    override fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", context.packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+
+    override fun openAccessibilitySettings() {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+
+    override fun openUrl(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+}

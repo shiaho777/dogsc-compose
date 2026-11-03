@@ -1,0 +1,30 @@
+DogSC Compose
+=============
+
+This product is an independent, unofficial port of DogSC.
+
+Upstream project:
+  DogSC (神烦老狗)
+  https://github.com/laogou717/dogsc
+  Copyright (c) 2026 神烦老狗
+  MIT License
+
+The upstream MIT license is reproduced in LICENSE. The port preserves the
+upstream product model, visual language and user-visible behavior where the
+Android platform allows it; platform substitutions are documented in
+docs/DECISIONS.md and docs/PARITY.md.
+
+Bundled fonts:
+  Alibaba PuHuiTi 3.0 (Regular / Medium / SemiBold), unmodified official OTF
+  files, subset for the application's UI character set.
+  Copyright © 2020–2023 Alibaba (China) Co., Ltd.
+  Licensed under the Alibaba PuHuiTi 3.0 legal notice; see
+  docs/licenses/AlibabaPuHuiTi-3.0-LICENSE.txt.
+
+Third-party libraries:
+  Kotlin, Kotlin Coroutines, kotlinx.serialization — Apache License 2.0
+  Jetpack Compose / Compose Multiplatform — Apache License 2.0
+  AndroidX CameraX, Media3 — Apache License 2.0
+  Android SDK — Android SDK License
+
+This project is not affiliated with or endorsed by the upstream author.
