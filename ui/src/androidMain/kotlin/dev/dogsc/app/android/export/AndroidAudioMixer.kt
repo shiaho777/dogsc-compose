@@ -80,7 +80,10 @@ class AndroidAudioMixer(
         if (sources.isEmpty()) return false
         Log.d("DogSCAudio", "sources=${sources.size} system=${systemFile?.length()} mic=${microphoneFile?.length()}")
         // Fast path: one untouched source can be copied without decode/re-encode.
+        val singleIsSystem = systemFile?.exists() == true || microphoneFile?.exists() != true
+        val singleIsAudible = if (singleIsSystem) !project.audio.isSystemMuted else !project.audio.isMicrophoneMuted
         if (sources.size == 1 &&
+            singleIsAudible &&
             project.timeline.primarySegmentAudioOverrides.isEmpty() &&
             project.audio.systemVolume >= 0.999 &&
             project.audio.microphoneVolume >= 0.999
