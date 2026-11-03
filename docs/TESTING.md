@@ -21,6 +21,8 @@ Core tests (`core/src/commonTest`) cover:
 - media timeline placement both directions
 - sticker fade visibility
 - screen motion scale/position
+- playback-rate output clock and auxiliary media plan
+- 3D quad corner mapping
 
 The Android release build also compiles the NDK color-conversion library for all four ABIs.
 
@@ -34,6 +36,8 @@ Environment used: Android 15 emulator, hardware GPU (`-gpu host`), 1080×2400.
 4. **Editor**: scrub, play, split, trim, restore cuts, add zoom/screen 3D/mosaic, toggle waveform, add markers, save scene preset.
 5. **Export**: 1080p/30 MP4. `ffprobe` confirms H.264 1920×1080, 30 FPS, AAC, 12.03 s. Extract a frame and compare background, card, radius and shadow with the editor.
 6. **Audio-only**: fast path produced a 190 KB M4A for 12 s.
+7. **Onboarding**: first-launch three-page flow renders and persists the seen flag.
+8. **Timeline polish**: real filmstrip frames, waveform toggle, marker sheet, scene preset sheet, per-segment speed/audio controls and export range slider are present in the editor.
 
 ## Visual evidence
 
