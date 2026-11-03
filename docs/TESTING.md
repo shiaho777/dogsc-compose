@@ -23,6 +23,8 @@ Core tests (`core/src/commonTest`) cover:
 - screen motion scale/position
 - playback-rate output clock and auxiliary media plan
 - 3D quad corner mapping
+- 3D homography: corners, interior points and flat identity (`ScreenProjectionTest`)
+- export estimate follows selected resolution/FPS and real source size (`ExportEstimatorTest`)
 - primary segment reordering
 - export range/trim math (manual runtime)
 
@@ -40,6 +42,11 @@ Environment used: Android 15 emulator, hardware GPU (`-gpu host`), 1080×2400.
 6. **Audio-only**: fast path produced a 190 KB M4A for 12 s.
 7. **Onboarding**: first-launch three-page flow renders and persists the seen flag.
 8. **Timeline polish**: real filmstrip frames, waveform toggle, marker sheet, scene preset sheet, per-segment speed/audio controls and export range slider are present in the editor.
+9. **3D preview vs export** (dedicated AVD `DogSCVerify`, `emulator-5556`): add screen 3D at 0 s, step the playhead to 1.00 s, screencap; export 1280×720/60; extract the 1.00 s frame with ffmpeg. Detect the saturated test-pattern corners in the preview canvas region and in the exported frame with PIL. Normalized corners differ by ≤0.006.
+10. **Edit persistence**: add a clip → `am force-stop` → reopen: clip kept. Add a clip → Home → kill after 0.8 s (shorter than the 1.2 s autosave debounce): clip kept, proving the `ON_STOP` save path.
+11. **Export sheet state**: switching 原始素材/1080p/4K updates the header size and estimate live; after a finished export the sheet shows 导出完成 + size + 分享 + 重新导出.
+
+Screenshots are judged by UI dumps (`uiautomator dump`) and PIL pixel sampling, not by eye, so evidence is reproducible from the commands above.
 
 ## Visual evidence
 

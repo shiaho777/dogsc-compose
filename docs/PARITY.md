@@ -3,7 +3,7 @@
 Living comparison against upstream [DogSC](https://github.com/laogou717/dogsc).
 Status values: **Done**, **Partial**, **Gap**. A feature is Done only when it has a user-visible path and a verification method; architecture alone does not count.
 
-Last updated: 2026-11-03.
+Last updated: 2026-11-04.
 
 ## Recording
 
@@ -63,7 +63,7 @@ Last updated: 2026-11-03.
 | Manual zoom | Add clip, scale/focus/easing/enter/exit | Done | |
 | Spring/easing curves | Linear/quadratic/cubic/quintic/spring/custom model | Partial | UI exposes spring/cubic/quintic/linear; custom bezier editor absent |
 | Focus effect | Radial/linear blur + dimming, animation/pointer/fixed targets | Done | Core + UI + renderer |
-| Screen 3D | Tilt X/Y, rotate Z, perspective, projection anchor | Partial | Export exact; preview uses graphicsLayer approximation; visual test at 0.7 s shows tilt |
+| Screen 3D | Tilt X/Y, rotate Z, perspective, projection anchor | Done | Preview and export warp the card through the same `ProjectedScreenQuad.homography()`; `ScreenProjectionTest` 3/3; on emulator at 1.00 s, preview vs exported-frame corner detection differs ≤0.006 (normalized) |
 | Camera PiP motion | Shape, position, size, fullscreen transition, opacity | Partial | Core + UI; camera track unverified on physical device, emulator exposes one lens |
 | Opening sequence | Converge/side-slide/light-3D, duration/stagger/order/curve | Done | Core + UI + renderer |
 | Cursor styles | System arrow, hand, crosshair, I-beam, open/closed hand, not-allowed, touch dot, hidden | Done | Vector renderer |
@@ -100,8 +100,9 @@ Last updated: 2026-11-03.
 | M4A audio-only | Audio track copy fast path | Done | 190 KB M4A for a 12 s clip |
 | 30/60 FPS | Encoder settings | Done | |
 | Source/1080p/1440p/4K | Canvas dimensions + encoder | Partial | 4K not performance-verified |
-| Preview/export consistency | Shared `FrameScene` | Partial | 2D matches; 3D preview is approximate; GPU renderer pending |
-| Estimated size/ETA | Bitrate policy + live progress | Done | |
+| Preview/export consistency | Shared `FrameScene` + shared 3D homography | Partial | 2D and 3D card geometry match (corner test above); mosaic/background blur in preview is still an approximation |
+| Estimated size/ETA | Bitrate policy + live progress | Done | Header and size follow the current resolution/FPS selection and the real source size (`ExportEstimatorTest` 4/4; emulator: 原始素材 1280×720 ≈17.5 MB, 1080p ≈30 MB, 4K ≈119 MB) |
+| Export completion state | Progress cleared on success; result card with share/re-export | Done | Emulator: after export the sheet shows 导出完成 · 14.7 MB · 分享 · 重新导出 |
 | Cancel export | Volatile cancel flag + UI | Done | |
 | Export selection/trim | Range slider in export sheet; video/audio renderer trims and re-bases timestamps | Partial | Implemented; trimmed export not yet re-verified end-to-end |
 | Long-recording performance | CPU Canvas + native YUV | Partial | ~4× realtime at 1080p30 on emulator; GL renderer required |
@@ -111,6 +112,8 @@ Last updated: 2026-11-03.
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
 | Project library | Grid, thumbnails, rename/duplicate/delete | Done | |
+| Edit persistence | Debounced autosave (1.2 s), save on leaving the editor, save on app background (`ON_STOP`) | Done | Emulator: edit → force-stop → reopen keeps the clip; edit → Home → kill after 0.8 s (before the debounce) also keeps it |
+| Editor reactivity | Every session commit/undo/redo bumps a Compose revision; validation errors become toasts | Done | Emulator: 添加屏幕 3D / 添加缩放 now update the clip count (previously stayed at 0) |
 | First-launch introduction | Three-page onboarding with capability and permission guidance | Done | `OnboardingScreen`; persisted first-launch flag | |
 | Onboarding permission tour | Screen/accessibility permission cards in onboarding and settings | Partial | No automatic return-state recheck tour | |
 | Settings | Capabilities, permissions, storage, about, licenses | Partial | No theme/language/recording-default settings |
@@ -132,6 +135,8 @@ Last updated: 2026-11-03.
 - Recorded 90.78 s screen + 88.81 s system audio; project reopened with correct duration.
 - Exported a 12.03 s 1920×1080/30 H.264+AAC MP4; frame extraction verified background, card, rounded corners and shadow.
 - Audio-only export produced a 190 KB M4A in ~1.2 s on the fast path.
+- 2026-11-04, dedicated AVD `DogSCVerify`: imported 12 s 1280×720 clip, added screen 3D, exported 1280×720/60 H.264+AAC (12.03 s). Projected-quad corners at 1.00 s: preview TL(0.105,0.092) TR(0.940,0.053) BR(0.940,0.947) BL(0.080,0.912); export TL(0.109,0.086) TR(0.941,0.053) BR(0.941,0.950) BL(0.081,0.914).
+- Found and fixed: editor commits did not recompose the UI (every add/edit button looked dead until another state change); no autosave (edits lost on process death); export header ignored current selection and source size; export sheet stayed on 取消导出 after success.
 
 ## Next gaps to close
 
