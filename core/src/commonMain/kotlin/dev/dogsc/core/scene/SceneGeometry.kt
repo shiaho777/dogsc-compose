@@ -402,6 +402,43 @@ data class ProjectedScreenQuad(
         get() = CompositionPoint(corners.sumOf { it.x } / 4, corners.sumOf { it.y } / 4)
     val resizeHandlePoint: CompositionPoint get() = bottomRight
 
+    /**
+     * Row-major 3×3 homography that maps points authored inside [sourceRect] onto this quad.
+     * Preview and export both warp the screen card with this matrix, so the two stay identical.
+     */
+    fun homography(sourceRect: CompositionRect): DoubleArray? {
+        if (sourceRect.width <= 0 || sourceRect.height <= 0) return null
+        val dx1 = topRight.x - bottomRight.x
+        val dx2 = bottomLeft.x - bottomRight.x
+        val dx3 = topLeft.x - topRight.x + bottomRight.x - bottomLeft.x
+        val dy1 = topRight.y - bottomRight.y
+        val dy2 = bottomLeft.y - bottomRight.y
+        val dy3 = topLeft.y - topRight.y + bottomRight.y - bottomLeft.y
+        val denominator = dx1 * dy2 - dx2 * dy1
+        val px: Double
+        val py: Double
+        if (kotlin.math.abs(dx3) <= 1e-9 && kotlin.math.abs(dy3) <= 1e-9) {
+            px = 0.0; py = 0.0
+        } else {
+            if (kotlin.math.abs(denominator) <= 1e-9) return null
+            px = (dx3 * dy2 - dx2 * dy3) / denominator
+            py = (dx1 * dy3 - dx3 * dy1) / denominator
+        }
+        val a = topRight.x - topLeft.x + px * topRight.x
+        val b = bottomLeft.x - topLeft.x + py * bottomLeft.x
+        val d = topRight.y - topLeft.y + px * topRight.y
+        val e = bottomLeft.y - topLeft.y + py * bottomLeft.y
+        val sx = 1.0 / sourceRect.width
+        val sy = 1.0 / sourceRect.height
+        val ox = -sourceRect.x * sx
+        val oy = -sourceRect.y * sy
+        return doubleArrayOf(
+            a * sx, b * sy, a * ox + b * oy + topLeft.x,
+            d * sx, e * sy, d * ox + e * oy + topLeft.y,
+            px * sx, py * sy, px * ox + py * oy + 1.0,
+        )
+    }
+
     /** Projects a point authored inside [sourceRect] through the quad homography. */
     fun project(point: CompositionPoint, sourceRect: CompositionRect): CompositionPoint? {
         if (sourceRect.width <= 0 || sourceRect.height <= 0) return null

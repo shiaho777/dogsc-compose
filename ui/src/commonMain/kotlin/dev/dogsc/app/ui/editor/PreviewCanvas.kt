@@ -21,7 +21,10 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
@@ -173,21 +176,37 @@ private fun ScreenLayer(
         (screen.cornerRadius / max(screen.finalRect.width, 1.0)).toFloat()
     }
     val textMeasurer = rememberTextMeasurer()
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val pivotX = ((screen.finalRect.x + screen.finalRect.width * screen.projectionAnchor.x) / canvas.width).toFloat()
-    val pivotY = ((screen.finalRect.y + screen.finalRect.height * screen.projectionAnchor.y) / canvas.height).toFloat()
+    val shadow = screen.shadow
+    if (shadow != null) {
+        // Same blurred quad as CanvasFrameRenderer.drawScreen, drawn beneath the warped card.
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val radius = max(shadow.radius.toFloat(), 2f) * (size.width / canvas.width.toFloat())
+                    renderEffect = BlurEffect(radius, radius, TileMode.Decal)
+                    alpha = screen.opacity.toFloat()
+                },
+        ) {
+            val sx = size.width / canvas.width.toFloat()
+            val sy = size.height / canvas.height.toFloat()
+            val quad = screen.projectedQuad
+            val dy = shadow.offset.y
+            val path = Path().apply {
+                moveTo((quad.topLeft.x * sx).toFloat(), ((quad.topLeft.y + dy) * sy).toFloat())
+                lineTo((quad.topRight.x * sx).toFloat(), ((quad.topRight.y + dy) * sy).toFloat())
+                lineTo((quad.bottomRight.x * sx).toFloat(), ((quad.bottomRight.y + dy) * sy).toFloat())
+                lineTo((quad.bottomLeft.x * sx).toFloat(), ((quad.bottomLeft.y + dy) * sy).toFloat())
+                close()
+            }
+            drawPath(path, Color.Black.copy(alpha = (shadow.opacity * 90.0 / 255.0).toFloat().coerceIn(0f, 1f)))
+        }
+    }
 
     Canvas(
         Modifier
             .fillMaxSize()
-            .graphicsLayer {
-                rotationX = screen.rotationX.toFloat()
-                rotationY = screen.rotationY.toFloat()
-                rotationZ = screen.rotationZ.toFloat()
-                cameraDistance = 8f * density.density / screen.perspective.toFloat().coerceAtLeast(0.05f)
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(pivotX, pivotY)
-                alpha = screen.opacity.toFloat()
-            },
+            .graphicsLayer { alpha = screen.opacity.toFloat() },
     ) {
         val w = size.width
         val h = size.height
@@ -204,17 +223,11 @@ private fun ScreenLayer(
             outer.top + (contentTop + contentHeight) * outer.height,
         )
         if (outer.width <= 1f || outer.height <= 1f) return@Canvas
-        run {
-            // Shadow.
-            val shadow = screen.shadow
-            if (shadow != null) {
-                drawRoundRect(
-                    color = Color.Black.copy(alpha = (shadow.opacity * 0.55).toFloat()),
-                    topLeft = Offset(outer.left, outer.top + outer.height * 0.015f),
-                    size = Size(outer.width, outer.height),
-                    cornerRadius = CornerRadius(outer.width * outerRadius, outer.width * outerRadius),
-                )
-            }
+        val sx = w / canvas.width.toFloat()
+        val sy = h / canvas.height.toFloat()
+        val homography = screen.projectedQuad.homography(outerRect)
+        val warp = homography?.let { m -> pixelHomography(m, sx, sy) }
+        withTransform({ if (warp != null) transform(warp) }) {
             if (chrome != null) {
                 drawChrome(chrome, outer, content, contentRadius, textMeasurer)
             } else {
@@ -261,6 +274,26 @@ private fun ScreenLayer(
             }
         }
     }
+}
+
+/**
+ * Converts the composition-space homography from [ProjectedScreenQuad.homography] into a
+ * pixel-space Compose matrix: P = S · H · S⁻¹ with S = diag(sx, sy, 1).
+ */
+private fun pixelHomography(h: DoubleArray, sx: Float, sy: Float): Matrix {
+    val s = floatArrayOf(sx, sy, 1f)
+    fun p(row: Int, col: Int): Float = (h[row * 3 + col] * s[row] / s[col]).toFloat()
+    val matrix = Matrix()
+    matrix.values[Matrix.ScaleX] = p(0, 0)
+    matrix.values[Matrix.SkewX] = p(0, 1)
+    matrix.values[Matrix.TranslateX] = p(0, 2)
+    matrix.values[Matrix.SkewY] = p(1, 0)
+    matrix.values[Matrix.ScaleY] = p(1, 1)
+    matrix.values[Matrix.TranslateY] = p(1, 2)
+    matrix.values[Matrix.Perspective0] = p(2, 0)
+    matrix.values[Matrix.Perspective1] = p(2, 1)
+    matrix.values[Matrix.Perspective2] = p(2, 2)
+    return matrix
 }
 
 private fun DrawScope.drawScreenFrame(
