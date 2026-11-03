@@ -50,6 +50,7 @@ Environment used: Android 15 emulator, hardware GPU (`-gpu host`), 1080×2400.
 | Editor | `docs/images/editor.png` |
 | Export sheet | `docs/images/export.png` |
 | Exported frame | `docs/images/export-frame.png` |
+| Onboarding | `docs/images/onboarding.png` |
 
 ## Known verification gaps
 

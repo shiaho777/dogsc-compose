@@ -33,6 +33,8 @@ DogSC Compose keeps the upstream product model — screen recording, system/micr
   <img src="docs/images/record-setup.png" width="300" alt="录制设置">
   &nbsp;&nbsp;
   <img src="docs/images/export.png" width="300" alt="导出">
+  &nbsp;&nbsp;
+  <img src="docs/images/onboarding.png" width="300" alt="首次引导">
 </p>
 
 ## Architecture
