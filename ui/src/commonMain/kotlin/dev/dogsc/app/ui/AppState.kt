@@ -135,10 +135,14 @@ class DogScAppState(
     private var autosaveJob: Job? = null
     private val saveMutex = Mutex()
     private var toastCounter = 0L
-    var exportProgress by mutableStateOf<ExportProgress?>(null)
-        private set
-    var lastExport by mutableStateOf<ExportResult?>(null)
-        private set
+    // Export state belongs to the project that started it; other projects must not see it.
+    private var exportOwnerId by mutableStateOf<String?>(null)
+    private var exportProgressState by mutableStateOf<ExportProgress?>(null)
+    private var lastExportState by mutableStateOf<ExportResult?>(null)
+    val exportProgress: ExportProgress?
+        get() = exportProgressState.takeIf { exportOwnerId != null && exportOwnerId == project?.id }
+    val lastExport: ExportResult?
+        get() = lastExportState.takeIf { exportOwnerId != null && exportOwnerId == project?.id }
 
     val project: RecorderProject? get() = sessionRevision.let { session?.project }
     val sourceDuration: Double get() = sessionRevision.let { session?.sourceDuration ?: 0.0 }
@@ -895,8 +899,9 @@ class DogScAppState(
     fun startExport(outputUri: String, audioOnly: Boolean = false, trimStart: Double = 0.0, trimEnd: Double? = null) {
         val project = project ?: return
         exportJob?.cancel()
-        lastExport = null
-        exportProgress = ExportProgress(0f, "正在准备素材")
+        exportOwnerId = project.id
+        lastExportState = null
+        exportProgressState = ExportProgress(0f, "正在准备素材")
         exportJob = scope.launch {
             val result = platform.export(
                 ExportRequest(
@@ -908,28 +913,28 @@ class DogScAppState(
                     trimEnd = trimEnd,
                 ),
             ) { progress ->
-                scope.launch { if (lastExport == null && exportJob?.isActive == true) exportProgress = progress }
+                scope.launch { if (lastExportState == null && exportJob?.isActive == true) exportProgressState = progress }
             }
-            lastExport = result
+            lastExportState = result
             if (result is ExportResult.Success) {
-                exportProgress = null
+                exportProgressState = null
                 showToast("已导出 ${formatFileSize(result.sizeBytes)}")
             } else if (result is ExportResult.Failure) {
-                exportProgress = null
+                exportProgressState = null
                 showToast(result.message, isError = true)
             }
         }
     }
 
     fun clearExportResult() {
-        lastExport = null
-        exportProgress = null
+        lastExportState = null
+        exportProgressState = null
     }
 
     fun cancelExport() {
         platform.cancelExport()
         exportJob?.cancel()
-        exportProgress = null
+        exportProgressState = null
         showToast("已取消导出")
     }
 
