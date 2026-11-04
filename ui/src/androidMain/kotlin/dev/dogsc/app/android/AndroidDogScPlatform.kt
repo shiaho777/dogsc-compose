@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import dev.dogsc.app.android.export.AndroidExporter
+import dev.dogsc.app.platform.AppPreferences
 import dev.dogsc.app.platform.DogScPlatform
 import dev.dogsc.app.platform.ExportProgress
 import dev.dogsc.app.platform.ExportRequest
@@ -16,6 +17,7 @@ import dev.dogsc.app.platform.ExportResult
 import dev.dogsc.app.platform.LoadedProject
 import dev.dogsc.app.platform.MediaProbe
 import dev.dogsc.app.platform.ProjectSummary
+import dev.dogsc.app.platform.RecordingOptions
 import dev.dogsc.app.platform.ScenePreset
 import dev.dogsc.core.model.RecorderProject
 import java.io.File
@@ -145,5 +147,40 @@ class AndroidDogScPlatform(
     override fun markOnboardingSeen() {
         context.getSharedPreferences("dogsc_prefs", Context.MODE_PRIVATE).edit()
             .putBoolean("onboarding_seen", true).apply()
+    }
+
+    override suspend fun loadPreferences(): AppPreferences {
+        val prefs = context.getSharedPreferences("dogsc_prefs", Context.MODE_PRIVATE)
+        return AppPreferences(
+            recording = RecordingOptions(
+                systemAudio = prefs.getBoolean("rec_system_audio", true),
+                microphone = prefs.getBoolean("rec_microphone", false),
+                camera = prefs.getBoolean("rec_camera", false),
+                touchCapture = prefs.getBoolean("rec_touch", false),
+                cameraLensFacing = prefs.getInt("rec_lens", 1),
+                frameRate = prefs.getInt("rec_fps", 60),
+            ),
+            exportSoundEnabled = prefs.getBoolean("export_sound", true),
+        )
+    }
+
+    override fun playExportSound() {
+        runCatching {
+            val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)
+            tone.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 220)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ runCatching { tone.release() } }, 400)
+        }
+    }
+
+    override suspend fun savePreferences(preferences: AppPreferences) {
+        context.getSharedPreferences("dogsc_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("rec_system_audio", preferences.recording.systemAudio)
+            .putBoolean("rec_microphone", preferences.recording.microphone)
+            .putBoolean("rec_camera", preferences.recording.camera)
+            .putBoolean("rec_touch", preferences.recording.touchCapture)
+            .putInt("rec_lens", preferences.recording.cameraLensFacing)
+            .putInt("rec_fps", preferences.recording.frameRate)
+            .putBoolean("export_sound", preferences.exportSoundEnabled)
+            .apply()
     }
 }

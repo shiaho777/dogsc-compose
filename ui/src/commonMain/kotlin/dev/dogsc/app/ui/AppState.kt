@@ -127,6 +127,9 @@ class DogScAppState(
     private var waveformJob: Job? = null
     var hiddenTracks by mutableStateOf<Set<String>>(emptySet())
     var recordingOptions by mutableStateOf(RecordingOptions())
+        private set
+    var exportSoundEnabled by mutableStateOf(true)
+        private set
 
     private var previewJob: Job? = null
     private var playbackJob: Job? = null
@@ -176,6 +179,32 @@ class DogScAppState(
         scope.launch {
             scenePresets = platform.loadScenePresets()
         }
+    }
+
+    fun refreshPreferences() {
+        scope.launch {
+            val prefs = runCatching { platform.loadPreferences() }.getOrNull() ?: return@launch
+            recordingOptions = prefs.recording
+            exportSoundEnabled = prefs.exportSoundEnabled
+        }
+    }
+
+    fun updateRecordingDefaults(transform: (RecordingOptions) -> RecordingOptions) {
+        recordingOptions = transform(recordingOptions)
+        persistPreferences()
+    }
+
+    fun updateExportSoundEnabled(enabled: Boolean) {
+        exportSoundEnabled = enabled
+        persistPreferences()
+    }
+
+    private fun persistPreferences() {
+        val snapshot = dev.dogsc.app.platform.AppPreferences(
+            recording = recordingOptions,
+            exportSoundEnabled = exportSoundEnabled,
+        )
+        scope.launch { runCatching { platform.savePreferences(snapshot) } }
     }
 
     fun saveScenePreset(name: String) {
@@ -918,6 +947,7 @@ class DogScAppState(
             lastExportState = result
             if (result is ExportResult.Success) {
                 exportProgressState = null
+                if (exportSoundEnabled) platform.playExportSound()
                 showToast("已导出 ${formatFileSize(result.sizeBytes)}")
             } else if (result is ExportResult.Failure) {
                 exportProgressState = null

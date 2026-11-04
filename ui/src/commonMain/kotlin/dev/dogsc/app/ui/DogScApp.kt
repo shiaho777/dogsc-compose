@@ -58,6 +58,7 @@ fun DogScApp(host: DogScHost) {
     LaunchedEffect(Unit) {
         state.refreshProjects()
         state.refreshScenePresets()
+        state.refreshPreferences()
     }
 
     LaunchedEffect(recorder.isActive) {

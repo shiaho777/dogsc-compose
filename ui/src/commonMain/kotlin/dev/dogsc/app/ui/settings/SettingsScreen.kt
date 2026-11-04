@@ -43,7 +43,9 @@ import dev.dogsc.app.ui.components.HairlineDivider
 import dev.dogsc.app.ui.components.PillButton
 import dev.dogsc.app.ui.components.PillVariant
 import dev.dogsc.app.ui.components.SoftCard
+import dev.dogsc.app.ui.components.SegmentedControl
 import dev.dogsc.app.ui.components.SoftIconButton
+import dev.dogsc.app.ui.components.ToggleRow
 import dev.dogsc.app.ui.theme.DogScColors
 import dev.dogsc.ui.resources.Res
 import dev.dogsc.ui.resources.dogsc_icon
@@ -122,6 +124,63 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                     title = "摄像头",
                     subtitle = "用于画中画人像；开启摄像头录制时由系统询问",
                     action = { host.openAppSettings() },
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        SectionTitle("录制默认值")
+        SoftCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                ToggleRow(
+                    "系统声音",
+                    "录制应用播放的声音；部分应用会禁止采集",
+                    state.recordingOptions.systemAudio,
+                    { value -> state.updateRecordingDefaults { it.copy(systemAudio = value) } },
+                    enabled = platform.supportsSystemAudio,
+                )
+                ToggleRow(
+                    "麦克风",
+                    "独立录制人声，编辑时可单独调节音量",
+                    state.recordingOptions.microphone,
+                    { value -> state.updateRecordingDefaults { it.copy(microphone = value) } },
+                )
+                ToggleRow(
+                    "摄像头画中画",
+                    "单独录制摄像头，剪辑时调整位置与形状",
+                    state.recordingOptions.camera,
+                    { value -> state.updateRecordingDefaults { it.copy(camera = value) } },
+                    enabled = platform.supportsCamera,
+                )
+                ToggleRow(
+                    "记录触控位置",
+                    "用于光标轨迹与自动运镜，需要无障碍服务",
+                    state.recordingOptions.touchCapture,
+                    { value -> state.updateRecordingDefaults { it.copy(touchCapture = value) } },
+                    enabled = platform.supportsTouchCapture,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text("帧率", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(5.dp))
+                SegmentedControl(
+                    options = listOf("30 FPS", "60 FPS"),
+                    selectedIndex = if (state.recordingOptions.frameRate == 30) 0 else 1,
+                    onSelect = { index ->
+                        state.updateRecordingDefaults { it.copy(frameRate = if (index == 0) 30 else 60) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    compact = true,
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        SectionTitle("导出")
+        SoftCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                ToggleRow(
+                    "完成提示音",
+                    "导出完成后播放一声提示音",
+                    state.exportSoundEnabled,
+                    { value -> state.updateExportSoundEnabled(value) },
                 )
             }
         }

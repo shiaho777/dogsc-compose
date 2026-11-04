@@ -215,7 +215,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
             text = "开始录制",
             onClick = {
                 accessibilityEnabled = host.isAccessibilityServiceEnabled()
-                state.recordingOptions = options.copy(touchCapture = options.touchCapture && accessibilityEnabled)
+                state.updateRecordingDefaults { options.copy(touchCapture = options.touchCapture && accessibilityEnabled) }
                 host.startRecording(state.recordingOptions)
             },
             icon = Icons.Outlined.Videocam,

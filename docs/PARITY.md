@@ -116,7 +116,7 @@ Last updated: 2026-11-04.
 | Editor reactivity | Every session commit/undo/redo bumps a Compose revision; validation errors become toasts | Done | Emulator: 添加屏幕 3D / 添加缩放 now update the clip count (previously stayed at 0) |
 | First-launch introduction | Three-page onboarding with capability and permission guidance | Done | `OnboardingScreen`; persisted first-launch flag | |
 | Onboarding permission tour | Screen/accessibility permission cards in onboarding and settings | Partial | No automatic return-state recheck tour | |
-| Settings | Capabilities, permissions, storage, about, licenses | Partial | No theme/language/recording-default settings |
+| Settings | Capabilities, permissions, storage, recording defaults (system audio/mic/camera/touch/FPS), export completion sound, about, licenses | Partial | Defaults persist in `SharedPreferences` and are re-read at launch (verified: toggling the mic wrote `rec_microphone=true`). Theme and interface language still missing |
 | Localization | Chinese | Partial | Upstream English strings not ported |
 | Menu/shortcut reference | Bottom sheet | Partial | No key handling |
 | Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Unverified | Not visually verified on tablet |

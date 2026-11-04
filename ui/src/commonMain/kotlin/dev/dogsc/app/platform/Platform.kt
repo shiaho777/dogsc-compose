@@ -67,6 +67,12 @@ data class RecordingResult(
     val sourceDuration: Double,
 )
 
+/** App-wide preferences that outlive a project. */
+data class AppPreferences(
+    val recording: RecordingOptions = RecordingOptions(),
+    val exportSoundEnabled: Boolean = true,
+)
+
 /**
  * Everything the shared UI needs from a platform. Implementations own windows,
  * permissions, media codecs and files; product decisions stay in common code.
@@ -108,6 +114,10 @@ interface DogScPlatform {
     fun openUrl(url: String)
     fun hasSeenOnboarding(): Boolean
     fun markOnboardingSeen()
+
+    suspend fun loadPreferences(): AppPreferences
+    suspend fun savePreferences(preferences: AppPreferences)
+    fun playExportSound()
 }
 
 data class MediaProbe(
