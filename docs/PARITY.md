@@ -40,7 +40,7 @@ Last updated: 2026-11-04.
 
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
-| Filmstrip | 12 cached source frames, mapped through timeline cuts/retime | Partial | `loadFilmstrip` + timeline drawing; not yet visually verified |
+| Filmstrip | 12 cached source frames, mapped through timeline cuts/retime | Done | Emulator: the primary track row has 42 distinct coarse colours and a per-channel std of ~40 (real thumbnails), while an empty track row has 2 colours and std ~0 |
 | Waveform | Decodes AAC/PCM to 700 peaks; toggle in timeline | Done | Real peaks aligned through `TimelineMap` |
 | Zoom track | Mint clips, move/resize/select | Done | Emulator: dragging the clip middle moved 0.06 → 2.19 s; trailing resize 3.37 → 4.28 s; leading resize 3.10 → 3.27 s. Audit fixed drags being cancelled after the first delta (`pointerInput` keyed on `project`) and per-event deltas replacing total travel |
 | Screen 3D track | Clips with timing | Done | |
@@ -118,7 +118,7 @@ Last updated: 2026-11-04.
 | Onboarding permission tour | Permission cards in onboarding, settings and record setup; `ON_RESUME` re-checks the accessibility grant on return from system settings | Done | Settings and record setup refresh the grant state when the app becomes visible again |
 | Settings | Capabilities, permissions, storage, recording defaults (system audio/mic/camera/touch/FPS), export completion sound, about, licenses | Partial | Defaults persist in `SharedPreferences` and are re-read at launch (verified: toggling the mic wrote `rec_microphone=true`). Theme and interface language still missing |
 | Localization | Chinese | Partial | Upstream English strings not ported |
-| Menu/shortcut reference | Bottom sheet | Partial | No key handling |
+| Menu/shortcut reference | Bottom sheet listing the implemented bindings | Done | Every listed key is handled by the editor (`handleEditorKey`); verified Space, arrows, S, Ctrl+Z, Ctrl+Shift+Z on the emulator |
 | Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Unverified | Not visually verified on tablet |
 | iOS/desktop/web | Shared core/UI prepared; no targets yet | Gap | Android first; commonMain currently has no Android imports |
 
