@@ -342,10 +342,13 @@ private fun TimelineCanvas(
 ) {
     val project = state.project ?: return
     var dragHit by remember { mutableStateOf<TimelineHit?>(null) }
-    var dragStartTime by remember { mutableStateOf(0.0) }
+    // onDragStart reports the position after touch slop, which can sit outside a clip edge;
+    // hit-testing uses the original press so edge trims stay reachable.
+    var downPosition by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     var originalStart by remember { mutableStateOf(0.0) }
     var originalEnd by remember { mutableStateOf(0.0) }
     var lastX by remember { mutableStateOf(0f) }
+    var dragStartX by remember { mutableStateOf(0f) }
 
     Canvas(
         modifier = modifier
@@ -372,7 +375,7 @@ private fun TimelineCanvas(
             }
             .pointerInput(project, state.timelinePixelsPerSecond, state.snappingEnabled) {
                 val density = this
-                detectTapGestures { offset ->
+                detectTapGestures(onPress = { downPosition = it }, onTap = { offset ->
                     val time = (offset.x / size.width * state.outputDuration).coerceIn(0.0, state.outputDuration)
                     val hit = hitTest(state, offset.x, offset.y, size.width, size.height, density)
                     when (hit) {
@@ -386,45 +389,49 @@ private fun TimelineCanvas(
                             focusInspector(state, hit)
                         }
                     }
-                }
+                })
             }
-            .pointerInput(project, state.timelinePixelsPerSecond) {
+            // Keyed on Unit: every edit changes the project, and re-keying would cancel the drag
+            // after the first delta (which is what made clip drags move by a few milliseconds).
+            .pointerInput(Unit) {
                 val density = this
                 detectDragGestures(
                     onDragStart = { offset ->
-                        val hit = hitTest(state, offset.x, offset.y, size.width, size.height, density)
+                        val press = if (downPosition == androidx.compose.ui.geometry.Offset.Zero) offset else downPosition
+                        val hit = hitTest(state, press.x, press.y, size.width, size.height, density)
                         dragHit = hit
                         lastX = offset.x
-                        dragStartTime = (offset.x / size.width * state.outputDuration)
+                        dragStartX = offset.x
+                        val current = state.project ?: return@detectDragGestures
                         when (hit) {
                             is TimelineHit.Primary -> {
-                                val map = TimelineEditor.timelineMap(project, state.sourceDuration)
+                                val map = TimelineEditor.timelineMap(current, state.sourceDuration)
                                 val segment = map.segments.firstOrNull { it.id == hit.segmentId }
                                 originalStart = segment?.outputStart ?: 0.0
                                 originalEnd = segment?.outputEnd ?: 0.0
                             }
                             is TimelineHit.Zoom -> {
-                                val clip = project.timeline.zoomClips.firstOrNull { it.id == hit.id }
+                                val clip = current.timeline.zoomClips.firstOrNull { it.id == hit.id }
                                 originalStart = clip?.startTime ?: 0.0
                                 originalEnd = clip?.endTime ?: 0.0
                             }
                             is TimelineHit.Screen -> {
-                                val clip = project.timeline.screenMotionClips.firstOrNull { it.id == hit.id }
+                                val clip = current.timeline.screenMotionClips.firstOrNull { it.id == hit.id }
                                 originalStart = clip?.timing?.startTime ?: 0.0
                                 originalEnd = clip?.timing?.endTime ?: 0.0
                             }
                             is TimelineHit.Camera -> {
-                                val clip = project.timeline.cameraMotionClips.firstOrNull { it.id == hit.id }
+                                val clip = current.timeline.cameraMotionClips.firstOrNull { it.id == hit.id }
                                 originalStart = clip?.timing?.startTime ?: 0.0
                                 originalEnd = clip?.timing?.endTime ?: 0.0
                             }
                             is TimelineHit.Mosaic -> {
-                                val clip = project.timeline.mosaicClips.firstOrNull { it.id == hit.id }
+                                val clip = current.timeline.mosaicClips.firstOrNull { it.id == hit.id }
                                 originalStart = clip?.timing?.startTime ?: 0.0
                                 originalEnd = clip?.timing?.endTime ?: 0.0
                             }
                             is TimelineHit.Sticker -> {
-                                val clip = project.timeline.stickerClips.firstOrNull { it.id == hit.id }
+                                val clip = current.timeline.stickerClips.firstOrNull { it.id == hit.id }
                                 originalStart = clip?.timing?.startTime ?: 0.0
                                 originalEnd = clip?.timing?.endTime ?: 0.0
                             }
@@ -434,41 +441,53 @@ private fun TimelineCanvas(
                     onDrag = { change, dragAmount ->
                         change.consume()
                         val duration = state.outputDuration
-                        val delta = (dragAmount.x / size.width * duration)
                         lastX += dragAmount.x
+                        // Clips move with the total pointer travel, not one event's delta.
+                        val totalDelta = ((lastX - dragStartX) / size.width * duration)
                         when (val hit = dragHit) {
                             is TimelineHit.Ruler, TimelineHit.Empty -> {
                                 state.seekTo((lastX / size.width * duration).coerceIn(0.0, duration))
                             }
                             is TimelineHit.Primary -> {
-                                val map = TimelineEditor.timelineMap(project, state.sourceDuration)
-                                val segment = map.segments.firstOrNull { it.id == hit.segmentId }
-                                originalStart = segment?.outputStart ?: 0.0
-                                originalEnd = segment?.outputEnd ?: 0.0
-                            }
-                            is TimelineHit.Primary -> {
                                 if (hit.edge) {
-                                    state.trimPrimary(hit.segmentId, hit.leading, delta)
+                                    // Follow the finger exactly: derive the edge's target time from the
+                                    // pointer instead of accumulating deltas (which skip the slop).
+                                    val current = state.project
+                                    if (current != null) {
+                                        val map = TimelineEditor.timelineMap(current, state.sourceDuration)
+                                        val segment = map.segments.firstOrNull { it.id == hit.segmentId }
+                                        if (segment != null) {
+                                            val target = (change.position.x / size.width * duration).coerceIn(0.0, duration)
+                                            val edgeTime = if (hit.leading) segment.outputStart else segment.outputEnd
+                                            state.trimPrimary(hit.segmentId, hit.leading, target - edgeTime)
+                                        }
+                                    }
                                 }
                             }
                             is TimelineHit.Zoom -> {
-                                val clip = project.timeline.zoomClips.firstOrNull { it.id == hit.id } ?: return@detectDragGestures
-                                val newStart = if (hit.edge) {
-                                    (originalStart + delta).coerceIn(0.0, originalEnd - 0.08)
-                                } else originalStart
-                                val newEnd = if (hit.edge) originalEnd else (originalEnd + delta).coerceIn(originalStart + 0.08, duration)
-                                val movedStart = if (!hit.edge) (originalStart + delta).coerceIn(0.0, duration - (originalEnd - originalStart)) else newStart
-                                val movedEnd = if (!hit.edge) movedStart + (originalEnd - originalStart) else newEnd
+                                val clip = state.project?.timeline?.zoomClips?.firstOrNull { it.id == hit.id }
+                                    ?: return@detectDragGestures
+                                val movedStart = when {
+                                    !hit.edge -> (originalStart + totalDelta)
+                                        .coerceIn(0.0, duration - (originalEnd - originalStart))
+                                    hit.leading -> (originalStart + totalDelta).coerceIn(0.0, originalEnd - 0.08)
+                                    else -> originalStart
+                                }
+                                val movedEnd = when {
+                                    !hit.edge -> movedStart + (originalEnd - originalStart)
+                                    hit.leading -> originalEnd
+                                    else -> (originalEnd + totalDelta).coerceIn(originalStart + 0.08, duration)
+                                }
                                 state.updateProject("移动缩放片段") {
                                     TimelineEditor.updateZoom(it, hit.id) { c ->
                                         c.copy(startTime = movedStart, endTime = movedEnd)
                                     }
                                 }
                             }
-                            is TimelineHit.Screen -> updateTiming(state, hit.id, delta, originalStart, originalEnd, duration, ScreenTrack)
-                            is TimelineHit.Camera -> updateTiming(state, hit.id, delta, originalStart, originalEnd, duration, CameraTrack)
-                            is TimelineHit.Mosaic -> updateTiming(state, hit.id, delta, originalStart, originalEnd, duration, MosaicTrack)
-                            is TimelineHit.Sticker -> updateTiming(state, hit.id, delta, originalStart, originalEnd, duration, StickerTrack)
+                            is TimelineHit.Screen -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, ScreenTrack)
+                            is TimelineHit.Camera -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, CameraTrack)
+                            is TimelineHit.Mosaic -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, MosaicTrack)
+                            is TimelineHit.Sticker -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, StickerTrack)
                             else -> Unit
                         }
                     },
@@ -477,14 +496,21 @@ private fun TimelineCanvas(
                         if (hit is TimelineHit.Primary && !hit.edge) {
                             val duration = state.outputDuration
                             val targetTime = (lastX / size.width * duration).coerceIn(0.0, duration)
-                            val map = TimelineEditor.timelineMap(project, state.sourceDuration)
-                            val targetIndex = map.segments.indexOfLast { it.outputStart <= targetTime }
-                                .coerceAtLeast(0)
-                            state.movePrimarySegment(hit.segmentId, targetIndex)
+                            val current = state.project
+                            if (current != null) {
+                                val map = TimelineEditor.timelineMap(current, state.sourceDuration)
+                                val targetIndex = map.segments.indexOfLast { it.outputStart <= targetTime }
+                                    .coerceAtLeast(0)
+                                state.movePrimarySegment(hit.segmentId, targetIndex)
+                            }
                         }
                         dragHit = null
+                        downPosition = androidx.compose.ui.geometry.Offset.Zero
                     },
-                    onDragCancel = { dragHit = null },
+                    onDragCancel = {
+                        dragHit = null
+                        downPosition = androidx.compose.ui.geometry.Offset.Zero
+                    },
                 )
             },
     ) {

@@ -320,6 +320,8 @@ class PrimaryReorderTest {
         val split = dev.dogsc.core.editor.TimelineEditor.splitPrimary(project, 10.0, 4.0)!!
         val second = (split.timeline.sourceSequence as dev.dogsc.core.model.SourceSequence.Edited).segments[1]
         val moved = dev.dogsc.core.editor.TimelineEditor.movePrimarySegment(split, 10.0, second.id, 0)!!
+        // Reordered segments are valid: the editor must accept what the drag UI produces.
+        dev.dogsc.core.model.ProjectValidator.validate(moved)
         val map = dev.dogsc.core.editor.TimelineEditor.timelineMap(moved, 10.0)
         assertEquals(4.0, map.segments[0].sourceStart, 0.0001)
         assertEquals(6.0, map.segments[0].sourceDuration, 0.0001)

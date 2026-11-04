@@ -158,11 +158,10 @@ object ProjectValidator {
         }
         val segments = timeline.sourceSequence.segmentsOrEmpty
         val segmentIDs = mutableSetOf<String>()
-        var lastSourceStart = -1.0
         for (segment in segments) {
             if (!segmentIDs.add(segment.id)) throw ProjectValidationException("时间线存在重复的主片段。")
-            if (!segment.sourceStart.isFinite() || segment.sourceStart < lastSourceStart - 0.0001) {
-                throw ProjectValidationException("主片段顺序无效。")
+            if (!segment.sourceStart.isFinite() || segment.sourceStart < 0) {
+                throw ProjectValidationException("主片段起点无效。")
             }
             if (!segment.sourceDuration.isFinite() || segment.sourceDuration <= 0) {
                 throw ProjectValidationException("主片段时长无效。")
@@ -170,7 +169,13 @@ object ProjectValidator {
             if (segment.playbackRate !in RecordingSegment.MinimumPlaybackRate..RecordingSegment.MaximumPlaybackRate) {
                 throw ProjectValidationException("主片段变速超出 1×–100×。")
             }
-            lastSourceStart = segment.sourceStart
+        }
+        // Segments may be reordered, so only non-overlap is required, not ascending source order.
+        val ordered = segments.sortedBy { it.sourceStart }
+        for ((previous, next) in ordered.zipWithNext()) {
+            if (next.sourceStart < previous.sourceStart + previous.sourceDuration - 0.0001) {
+                throw ProjectValidationException("主片段不能重复使用同一段源素材。")
+            }
         }
     }
 

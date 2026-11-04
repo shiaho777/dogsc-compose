@@ -28,10 +28,10 @@ Last updated: 2026-11-04.
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
 | Split primary | `TimelineEditor.splitPrimary` + playhead action | Done | Core test |
-| Trim primary edges | Drag segment edges in timeline | Done | Core trim test |
+| Trim primary edges | Drag segment edges in timeline | Done | Core trim test + emulator: dragging the first segment's right edge 4.00 s → 2.44 s reduced the project from 10.62 s to 9.07 s. Audit fixed a duplicate `is TimelineHit.Primary` branch that made the trim path unreachable, and edge drags now follow the pointer's absolute position |
 | Ripple delete | `deletePrimaryRange` | Done | Core split/delete test |
 | Restore cuts | Restore one gap or all cuts | Done | Core restore test |
-| Reorder primary segments | Drag primary segment middle to a new position | Partial | Core reorder test; drag UI not yet visually verified |
+| Reorder primary segments | Drag primary segment middle to a new position | Done | Core test now also runs `ProjectValidator`. Audit found the validator rejected any non-ascending source order, so every reorder was silently refused; fixed. Emulator: dragging segment 1 (source 0–2.44 s) past segment 2 persisted the order `[(4.0, 6.63), (0.0, 2.44)]` with the total duration unchanged |
 | Speed 1×–100× | Per-segment slider + presets; timeline map retimes video and auxiliary tracks | Done | Emulator: split at 4 s, first segment 2× → editor 10.03 s; export 10.05 s video / 10.03 s AAC. Frame matching against a 1× baseline export: 10/10 samples hit the expected source time (out t<2 → 2t, else t+2), worst error 0 s. Audio: the audit found the mixer mapped source time and gain once per 1 s chunk and read retimed audio at 1× (content skipped, pitch shifted); rewritten per timeline slice with sample-exact boundaries and a pitch-preserving Sonic (WSOLA) stretch, the Android equivalent of upstream `.spectral`. Stepped-tone clip (+100 Hz per source second), split at 3.51 s, first segment 2×: FFT tone switches at 0.504/1.003/1.501/2.248 s… vs expected 0.5/1.0/1.5/2.245 s (≤4 ms, FFT hop 2.7 ms); 2× segment keeps 200/300/400 Hz. AAC encoder priming (2048 frames, probed per device) is dropped since MediaMuxer writes no edit list (was a 43 ms A/V lag); the encoder tail is flushed so audio 10.2827 s vs video 10.2833 s |
 | Undo/redo | Bounded snapshot stack; all editor commands go through `EditorSession` | Done | UI buttons + labels |
 | Per-segment audio overrides | System/mic mute + volume per primary segment, restore inheritance | Done | UI in primary inspector. Emulator, slice-based mixer: stepped-tone project split at 3.51 s (first segment 2×), second segment system volume 23 % → export vs untouched export: first segment Δ 0.00 dB, second segment Δ −12.65 dB (expected 20·log10(0.23) = −12.77 dB); gain switches between 1.750 and 1.760 s (expected 1.755 s) |
@@ -42,7 +42,7 @@ Last updated: 2026-11-04.
 |---|---|---|---|
 | Filmstrip | 12 cached source frames, mapped through timeline cuts/retime | Partial | `loadFilmstrip` + timeline drawing; not yet visually verified |
 | Waveform | Decodes AAC/PCM to 700 peaks; toggle in timeline | Done | Real peaks aligned through `TimelineMap` |
-| Zoom track | Mint clips, move/resize/select | Done | |
+| Zoom track | Mint clips, move/resize/select | Done | Emulator: dragging the clip middle moved 0.06 → 2.19 s; trailing resize 3.37 → 4.28 s; leading resize 3.10 → 3.27 s. Audit fixed drags being cancelled after the first delta (`pointerInput` keyed on `project`) and per-event deltas replacing total travel |
 | Screen 3D track | Clips with timing | Done | |
 | Camera motion track | Clips with timing | Done | |
 | Mosaic/spotlight track | Clips with timing | Done | |
