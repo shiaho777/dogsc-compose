@@ -76,6 +76,25 @@ object TouchRecorder {
 class DogScTouchAccessibilityService : android.accessibilityservice.AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // Android 14+ can stream raw touch motion; older versions fall back to click/scroll anchors.
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            runCatching {
+                serviceInfo = serviceInfo.apply {
+                    flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_SEND_MOTION_EVENTS
+                    setMotionEventSources(android.view.InputDevice.SOURCE_TOUCHSCREEN)
+                }
+            }
+        }
+    }
+
+    override fun onMotionEvent(event: android.view.MotionEvent) {
+        val motion = event
+        if (!TouchRecorder.isActive) return
+        when (motion.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE ->
+                TouchRecorder.recordTouch(motion.rawX.toDouble(), motion.rawY.toDouble(), "move")
+            else -> Unit
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

@@ -16,7 +16,7 @@ Last updated: 2026-11-04.
 | System audio | `AudioPlaybackCapture` (Android 10+) | Done | Recorded a 88.8 s AAC system track; source apps may opt out |
 | Microphone | `AudioRecord` + AAC encoder | Done | Separate `microphone.m4a`; mute writes aligned silence |
 | Camera PiP | CameraX `VideoCapture` in a background lifecycle | Partial | Implemented; not yet verified on physical hardware |
-| Touch/cursor track | Optional accessibility service; click/scroll positions → JSONL → `ProjectPointerTrack` | Partial | Clicks and scroll centers work; continuous motion depends on platform events |
+| Touch/cursor track | Optional accessibility service; clicks/scroll anchors on every version, continuous motion on Android 14+ via `FLAG_SEND_MOTION_EVENTS` | Partial | Clicks and scroll centres work; Android 14+ streams raw touch motion, older devices still only get event anchors |
 | Pause/resume | Pause intervals are cut out of the project timeline; recording continues | Done | `SourceSequence.Edited` from pause ranges |
 | Recording markers | Marker button/notification/overlay, persisted and shown on timeline | Done | `RecordingMarker` + marker sheet |
 | Floating recorder controls | `TYPE_APPLICATION_OVERLAY` with `FLAG_SECURE`, draggable pill | Done | Excluded from capture; notification fallback when overlay permission is denied |
