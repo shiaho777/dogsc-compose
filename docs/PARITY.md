@@ -52,6 +52,7 @@ Last updated: 2026-11-04.
 | Timeline zoom | +/- / fit buttons and two-finger pinch | Partial | Pinch implemented; not yet verified with multi-touch input |
 | Hover preview | Playhead scrubbing updates the preview | Done | Touch platform substitute for pointer hover |
 | Cut-boundary restore affordance | Menu action at playhead | Done | Touch has no hover/right-click; the restore menu acts on the playhead and lists the same operations |
+| Editor audio preview | ExoPlayer plays the primary audio through one clipped item per timeline slice; volume follows the project; uniform speed becomes the player rate | Done | Emulator: `dumpsys audio` shows a 48 kHz `AudioTrack` in `state:started` while playing and `state:paused` after Space |
 | Keyboard shortcuts | Physical keyboard: Space play/pause, ←/→ 1 frame, Shift+←/→ 5 frames, S split, Delete/Backspace delete selection, Ctrl/⌘+Z undo, Ctrl/⌘+Shift+Z redo, Ctrl/⌘+S save; the reference sheet lists them | Done | Emulator with `adb shell input keyevent/keycombination`: Space toggled playback (00:00 → 01:74 while playing), arrows stepped 1 frame, S split, Ctrl+Z removed the split (3 → 2 segments), Ctrl+Shift+Z restored it (2 → 3) |
 
 ## Motion and cursor
@@ -83,7 +84,7 @@ Last updated: 2026-11-04.
 | Corner/border/shadow/inset opacity | Sliders + color palette | Done | Audit found the color palette passed ARGB (`0xFF…`) to the 24-bit `HexColor`, so opening the 画面 inspector crashed every time; fixed and re-verified on the emulator |
 | Background patterns | Five presets | Done | Canvas renderer |
 | Dynamic backgrounds | Three presets with time-driven drift/dot motion | Partial | Preview and export both read `scene.time`; visual verification pending |
-| Custom image/video background | SAF import + cover draw | Partial | Video background decoded per frame; blur is approximate |
+| Custom image/video background | SAF import + cover draw; preview and export both center-crop, blur with a ×18 downscale and the same dimming factor | Done | Preview now uses the export's cover math, blur and dimming; video backgrounds decode per frame |
 | Window/browser frames | Chrome + title/address + scale/radius | Done | |
 | Phone/tablet frames | Adaptive device bezel | Done | |
 | Stickers | Import, layer order, transform, animation, hide screen/camera | Done | |
@@ -99,7 +100,7 @@ Last updated: 2026-11-04.
 | M4A audio-only | Audio track copy fast path | Done | 190 KB M4A for a 12 s clip |
 | 30/60 FPS | Encoder settings | Done | |
 | Source/1080p/1440p/4K | Canvas dimensions + encoder | Partial | 4K not performance-verified |
-| Preview/export consistency | Shared `FrameScene` + shared 3D homography | Partial | 2D and 3D card geometry match (corner test above); mosaic/background blur in preview is still an approximation |
+| Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur | Partial | 2D, 3D, stickers, mosaic and custom backgrounds match. Preview audio honours cuts and volume; mixed per-segment speeds play at 1× in preview because ExoPlayer's rate is player-wide |
 | Estimated size/ETA | Bitrate policy + live progress | Done | Header and size follow the current resolution/FPS selection and the real source size (`ExportEstimatorTest` 4/4; emulator: 原始素材 1280×720 ≈17.5 MB, 1080p ≈30 MB, 4K ≈119 MB) |
 | Export completion state | Progress cleared on success; result card with share/re-export | Done | Emulator: after export the sheet shows 导出完成 · 14.7 MB · 分享 · 重新导出 |
 | Cancel export | Volatile cancel flag + UI | Done | |

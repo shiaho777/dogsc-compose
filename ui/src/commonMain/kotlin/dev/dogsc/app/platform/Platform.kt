@@ -119,6 +119,12 @@ interface DogScPlatform {
     suspend fun loadPreferences(): AppPreferences
     suspend fun savePreferences(preferences: AppPreferences)
     fun playExportSound()
+
+    /** Editor timeline audio. Platforms without audio preview keep these no-ops. */
+    fun startPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {}
+    fun seekPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {}
+    fun pausePreviewAudio() {}
+    fun releasePreviewAudio() {}
 }
 
 data class MediaProbe(

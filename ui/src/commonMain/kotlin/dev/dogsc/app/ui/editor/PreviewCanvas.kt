@@ -130,6 +130,7 @@ fun ScenePreview(
                     drawSafeGuides(canvasSize)
                 }
             }
+            BackgroundBlurLayer(scene, state.backgroundPreviewFrame)
             ScreenLayer(
                 scene = scene,
                 frame = state.previewFrame,
@@ -682,6 +683,51 @@ private fun StickerLayer(scene: FrameScene, bitmaps: Map<String, ImageBitmap>) {
 }
 
 /**
+ * Custom image/video backgrounds blur the same way as export: a downscaled copy (×18) drawn over
+ * the sharp image with the blur-radius alpha, before the shared dimming overlay.
+ */
+@Composable
+private fun BackgroundBlurLayer(scene: FrameScene, bitmap: ImageBitmap?) {
+    val blur = scene.background.blurRadius
+    if (bitmap == null || blur <= 0.1) return
+    Canvas(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val block = 18f * size.width / bitmap.width.coerceAtLeast(1)
+                val sigma = (block * 0.22f).coerceIn(1.2f, 48f)
+                renderEffect = BlurEffect(sigma, sigma, TileMode.Clamp)
+                alpha = (blur / 96.0).toFloat().coerceIn(0f, 1f)
+            },
+    ) {
+        drawImageCover(bitmap, 0f, 0f, size.width, size.height)
+    }
+}
+
+/** Center-crop cover draw, matching the export renderer's `drawCover`. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawImageCover(
+    image: ImageBitmap,
+    left: Float,
+    top: Float,
+    width: Float,
+    height: Float,
+) {
+    if (width <= 0f || height <= 0f) return
+    val scale = max(width / image.width, height / image.height)
+    val srcW = (width / scale).coerceAtMost(image.width.toFloat())
+    val srcH = (height / scale).coerceAtMost(image.height.toFloat())
+    val srcX = (image.width - srcW) / 2f
+    val srcY = (image.height - srcH) / 2f
+    drawImage(
+        image = image,
+        srcOffset = IntOffset(srcX.toInt(), srcY.toInt()),
+        srcSize = IntSize(srcW.toInt().coerceAtLeast(1), srcH.toInt().coerceAtLeast(1)),
+        dstOffset = IntOffset(left.toInt(), top.toInt()),
+        dstSize = IntSize(width.toInt().coerceAtLeast(1), height.toInt().coerceAtLeast(1)),
+    )
+}
+
+/**
  * Blur mosaics must show the same blurred screen content as export. Export downsamples the frame
  * by 12 and clips it to the mosaic rect; the preview applies an equivalent Gaussian blur to the
  * same rect and alpha, instead of the old flat translucent overlay.
@@ -798,17 +844,13 @@ private fun DrawScope.drawBackground(scene: FrameScene, bitmap: ImageBitmap?, ca
         is BackgroundSource.DynamicFlow -> drawDynamic(source.preset, scene.background, canvasSize, scene.time)
         else -> {
             if (bitmap != null) {
-                drawImage(
-                    image = bitmap,
-                    dstOffset = IntOffset.Zero,
-                    dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
-                    alpha = 1f,
-                )
+                drawImageCover(bitmap, 0f, 0f, size.width, size.height)
             } else {
                 drawRect(Brush.linearGradient(listOf(Color(0xFF202633), Color(0xFF0C0F16))))
             }
             if (scene.background.blurRadius > 0.1) {
-                drawRect(Color(0xFF0B0E14).copy(alpha = min(0.45f, (scene.background.blurRadius / 90).toFloat())))
+                // Same dimming factor as the export renderer (blurRadius / 96 × 90).
+                drawRect(Color(0xFF0B0E14).copy(alpha = min(0.35f, (scene.background.blurRadius / 96 * 90 / 255).toFloat())))
             }
         }
     }

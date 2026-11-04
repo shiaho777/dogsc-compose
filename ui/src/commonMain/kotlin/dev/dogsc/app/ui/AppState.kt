@@ -274,6 +274,7 @@ class DogScAppState(
 
     fun openLibrary() {
         stopPlayback()
+        platform.releasePreviewAudio()
         flushPendingSave()
         screen = AppScreen.Library
         session = null
@@ -586,6 +587,7 @@ class DogScAppState(
         val clamped = time.coerceIn(0.0, max(duration, 0.0))
         playhead = clamped
         if (updatePreview) requestPreviewFrame(clamped)
+        if (isPlaying) project?.let { platform.seekPreviewAudio(it, sourceDuration, clamped) }
     }
 
     fun stepFrames(frames: Int) {
@@ -601,6 +603,7 @@ class DogScAppState(
         if (outputDuration <= 0) return
         if (playhead >= outputDuration - 0.01) playhead = 0.0
         isPlaying = true
+        project?.let { platform.startPreviewAudio(it, sourceDuration, playhead) }
         playbackJob?.cancel()
         playbackJob = scope.launch {
             var lastFrameRequest = 0.0
@@ -612,6 +615,7 @@ class DogScAppState(
                 if (next >= outputDuration) {
                     playhead = outputDuration
                     isPlaying = false
+                    platform.pausePreviewAudio()
                     requestPreviewFrame(playhead)
                     break
                 }
@@ -628,6 +632,7 @@ class DogScAppState(
         isPlaying = false
         playbackJob?.cancel()
         playbackJob = null
+        platform.pausePreviewAudio()
     }
 
     fun requestPreviewFrame(time: Double) {

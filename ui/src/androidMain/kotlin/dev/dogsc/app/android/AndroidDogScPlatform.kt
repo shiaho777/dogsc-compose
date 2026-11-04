@@ -28,6 +28,7 @@ class AndroidDogScPlatform(
 ) : DogScPlatform {
     private val exporter = AndroidExporter(context, repository)
     private val waveformLoader = AndroidWaveformLoader(repository)
+    private val previewAudio = AndroidPreviewAudio(context, repository)
 
     override val platformName: String = "Android ${Build.VERSION.RELEASE}"
     override val supportsSystemAudio: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
@@ -163,6 +164,22 @@ class AndroidDogScPlatform(
             exportSoundEnabled = prefs.getBoolean("export_sound", true),
             memoText = prefs.getString("rec_memo", "") ?: "",
         )
+    }
+
+    override fun startPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
+        previewAudio.start(project, sourceDuration, outputTime)
+    }
+
+    override fun seekPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
+        previewAudio.seek(project, sourceDuration, outputTime)
+    }
+
+    override fun pausePreviewAudio() {
+        previewAudio.pause()
+    }
+
+    override fun releasePreviewAudio() {
+        previewAudio.release()
     }
 
     override fun playExportSound() {
