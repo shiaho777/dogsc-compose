@@ -1871,13 +1871,13 @@ private fun AudioInspector(state: DogScAppState) {
 private fun ColorRow(label: String, selected: HexColor, onSelect: (HexColor) -> Unit) {
     val palette = listOf(
         HexColor.White,
-        HexColor(0xFF1B1C20.toInt()),
-        HexColor(0xFFF2AE47.toInt()),
-        HexColor(0xFF5B8DEF.toInt()),
-        HexColor(0xFF85D142.toInt()),
-        HexColor(0xFFE68AB5.toInt()),
-        HexColor(0xFF9B7BD8.toInt()),
-        HexColor(0xFF7A7C84.toInt()),
+        HexColor(0x1B1C20),
+        HexColor(0xF2AE47),
+        HexColor(0x5B8DEF),
+        HexColor(0x85D142),
+        HexColor(0xE68AB5),
+        HexColor(0x9B7BD8),
+        HexColor(0x7A7C84),
     )
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(74.dp))

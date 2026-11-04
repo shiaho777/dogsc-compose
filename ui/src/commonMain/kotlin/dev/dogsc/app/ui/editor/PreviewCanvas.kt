@@ -137,6 +137,7 @@ fun ScenePreview(
                 canvasWidth = canvasWidth,
                 canvasHeight = canvasHeight,
             )
+            MosaicBlurLayer(scene, state.previewFrame)
             CameraLayer(scene, state.cameraPreviewFrame)
             CursorLayer(scene)
             StickerLayer(scene, state.stickerFrames)
@@ -680,6 +681,62 @@ private fun StickerLayer(scene: FrameScene, bitmaps: Map<String, ImageBitmap>) {
     }
 }
 
+/**
+ * Blur mosaics must show the same blurred screen content as export. Export downsamples the frame
+ * by 12 and clips it to the mosaic rect; the preview applies an equivalent Gaussian blur to the
+ * same rect and alpha, instead of the old flat translucent overlay.
+ */
+@Composable
+private fun MosaicBlurLayer(scene: FrameScene, frame: ImageBitmap?) {
+    if (frame == null) return
+    val mosaics = scene.screen.mosaics.filter {
+        it.style == MosaicEffectStyle.BLUR && it.intensity * it.transitionProgress > 0.01
+    }
+    if (mosaics.isEmpty()) return
+    val canvas = scene.canvasSize
+    val content = scene.screen.finalRect
+    for (mosaic in mosaics) {
+        val alpha = (mosaic.intensity * mosaic.transitionProgress * 235.0 / 255.0).toFloat().coerceIn(0f, 1f)
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val previewScale = size.width / canvas.width.toFloat()
+                    // 12 px is the export downscale factor; 0.22 keeps the preview's detail loss
+                    // in the same range as the export's downscale/upscale blur.
+                    val block = 12f * content.width.toFloat() * previewScale / frame.width.coerceAtLeast(1)
+                    val sigma = (block * 0.22f).coerceIn(1.2f, 48f)
+                    renderEffect = BlurEffect(sigma, sigma, TileMode.Clamp)
+                    this.alpha = alpha
+                },
+        ) {
+            val sx = size.width / canvas.width.toFloat()
+            val sy = size.height / canvas.height.toFloat()
+            val left = ((content.x + mosaic.sourceRect.x * content.width) * sx).toFloat()
+            val top = ((content.y + mosaic.sourceRect.y * content.height) * sy).toFloat()
+            val right = ((content.x + (mosaic.sourceRect.x + mosaic.sourceRect.width) * content.width) * sx).toFloat()
+            val bottom = ((content.y + (mosaic.sourceRect.y + mosaic.sourceRect.height) * content.height) * sy).toFloat()
+            val radius = (mosaic.cornerRadius * min(right - left, bottom - top)).toFloat().coerceAtLeast(0f)
+            val clip = Path().apply {
+                addRoundRect(
+                    androidx.compose.ui.geometry.RoundRect(
+                        left, top, right, bottom, CornerRadius(radius, radius),
+                    )
+                )
+            }
+            clipPath(clip) {
+                withTransform({ scale(sx, sy) }) {
+                    drawScreenFrame(
+                        frame,
+                        scene.screen,
+                        Rect(content.x.toFloat(), content.y.toFloat(), content.right.toFloat(), content.bottom.toFloat()),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun MosaicLayer(scene: FrameScene) {
     if (scene.screen.mosaics.isEmpty() && scene.screen.focusEffect == null) return
@@ -692,7 +749,7 @@ private fun MosaicLayer(scene: FrameScene) {
             val width = (mosaic.sourceRect.width * w).toFloat()
             val height = (mosaic.sourceRect.height * h).toFloat()
             val radius = (mosaic.cornerRadius * min(width, height)).toFloat()
-            val alpha = (mosaic.intensity * mosaic.transitionProgress).toFloat()
+            // BLUR mosaics are drawn by MosaicBlurLayer; only spotlight dimming belongs here.
             if (mosaic.style == MosaicEffectStyle.SPOTLIGHT) {
                 val path = Path().apply {
                     fillType = PathFillType.EvenOdd
@@ -704,20 +761,6 @@ private fun MosaicLayer(scene: FrameScene) {
                     )
                 }
                 drawPath(path, Color.Black.copy(alpha = (mosaic.spotlightDimming * mosaic.transitionProgress).toFloat()))
-            } else {
-                drawRoundRect(
-                    Color(0xFF202227).copy(alpha = alpha * 0.28f),
-                    Offset(left, top),
-                    Size(width, height),
-                    CornerRadius(radius, radius),
-                )
-                drawRoundRect(
-                    Color.White.copy(alpha = alpha * 0.06f),
-                    Offset(left, top),
-                    Size(width, height),
-                    CornerRadius(radius, radius),
-                    style = Stroke(1f),
-                )
             }
         }
         scene.screen.focusEffect?.let { focus ->

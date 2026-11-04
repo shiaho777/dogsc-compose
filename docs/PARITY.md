@@ -81,14 +81,14 @@ Last updated: 2026-11-04.
 | Source/1080p/1440p/4K | Core + export picker | Done | |
 | Crop | Four-edge crop editor | Done | |
 | Padding/content position/scale | Sliders + position pad | Done | |
-| Corner/border/shadow/inset opacity | Sliders + color palette | Done | |
+| Corner/border/shadow/inset opacity | Sliders + color palette | Done | Audit found the color palette passed ARGB (`0xFF…`) to the 24-bit `HexColor`, so opening the 画面 inspector crashed every time; fixed and re-verified on the emulator |
 | Background patterns | Five presets | Done | Canvas renderer |
 | Dynamic backgrounds | Three presets with time-driven drift/dot motion | Partial | Preview and export both read `scene.time`; visual verification pending |
 | Custom image/video background | SAF import + cover draw | Partial | Video background decoded per frame; blur is approximate |
 | Window/browser frames | Chrome + title/address + scale/radius | Done | |
 | Phone/tablet frames | Adaptive device bezel | Done | |
 | Stickers | Import, layer order, transform, animation, hide screen/camera | Done | |
-| Mosaic/spotlight | Rounded region, blur/dim, transitions | Partial | Preview blur is an overlay approximation; export uses downscale blur |
+| Mosaic/spotlight | Rounded region, blur/dim, transitions | Done | Preview now blurs the actual screen frame inside the same rounded rect with the same alpha (export downsamples ×12, preview uses an equivalent Gaussian); spotlight dimming was already identical. Emulator: the region that changes when toggling the mosaic matches the clip rect exactly (412–667 × 847–953), and detail inside drops from 573 to 157 while the control region is unchanged |
 | Scene presets | Save/apply/delete appearance snapshots | Done | `scene-presets.json` |
 | Wallpaper library | Not implemented | Gap | Use photo picker |
 
