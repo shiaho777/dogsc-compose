@@ -161,6 +161,7 @@ class AndroidDogScPlatform(
                 frameRate = prefs.getInt("rec_fps", 60),
             ),
             exportSoundEnabled = prefs.getBoolean("export_sound", true),
+            memoText = prefs.getString("rec_memo", "") ?: "",
         )
     }
 
@@ -181,6 +182,7 @@ class AndroidDogScPlatform(
             .putInt("rec_lens", preferences.recording.cameraLensFacing)
             .putInt("rec_fps", preferences.recording.frameRate)
             .putBoolean("export_sound", preferences.exportSoundEnabled)
+            .putString("rec_memo", preferences.memoText)
             .apply()
     }
 }

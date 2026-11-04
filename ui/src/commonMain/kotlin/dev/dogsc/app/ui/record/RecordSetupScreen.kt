@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -204,6 +205,27 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
             }
         }
 
+        Spacer(Modifier.height(14.dp))
+        SoftCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp)) {
+            Column(Modifier.padding(14.dp)) {
+                Text("录制备忘录", color = DogScColors.SecondaryText, style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "录制时点悬浮条上的「备忘」即可显示这段文字；悬浮窗不会被录进成片。",
+                    color = DogScColors.TertiaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = state.memoText,
+                    onValueChange = { state.updateMemoText(it) },
+                    placeholder = { Text("要念的稿子、要点或提醒", color = DogScColors.TertiaryText) },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
         Spacer(Modifier.height(18.dp))
         Text(
             "开始后 DogSC 会退到后台，悬浮控制条可随时暂停、标记或停止。录制内容不会包含控制条本身。",

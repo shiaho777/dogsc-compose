@@ -327,7 +327,9 @@ internal class RecordingCoordinator(
         if (options.touchCapture) {
             TouchRecorder.start(pointerFile, width, height)
         }
-        overlay = RecordingOverlay(context, this).also { it.show() }
+        val memo = context.getSharedPreferences("dogsc_prefs", android.content.Context.MODE_PRIVATE)
+            .getString("rec_memo", "") ?: ""
+        overlay = RecordingOverlay(context, this, memo).also { it.show() }
         timerJob = scope.launch {
             while (true) {
                 delay(250)

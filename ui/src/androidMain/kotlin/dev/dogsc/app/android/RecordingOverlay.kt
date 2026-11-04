@@ -21,6 +21,7 @@ import kotlin.math.roundToInt
 internal class RecordingOverlay(
     private val context: Context,
     private val coordinator: RecordingCoordinator,
+    private val memoText: String = "",
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private var root: LinearLayout? = null
@@ -29,6 +30,7 @@ internal class RecordingOverlay(
     private var markerView: TextView? = null
     private var micView: TextView? = null
     private var cameraView: TextView? = null
+    private var memoView: TextView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
     fun show() {
@@ -70,6 +72,7 @@ internal class RecordingOverlay(
             val next = !coordinator.cameraEnabled()
             AndroidRecorderManager.instance?.setCameraEnabled(next)
         }
+        val memoButton = action("备忘") { toggleMemo() }
         val stop = action("停止") { coordinator.stop() }.apply {
             setTextColor(Color.rgb(255, 120, 112))
         }
@@ -79,6 +82,7 @@ internal class RecordingOverlay(
         container.addView(markerView)
         container.addView(micView)
         container.addView(cameraView)
+        if (memoText.isNotBlank()) container.addView(memoButton)
         container.addView(stop)
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -126,9 +130,55 @@ internal class RecordingOverlay(
     }
 
     fun hide() {
+        hideMemo()
         root?.let { runCatching { windowManager.removeView(it) } }
         root = null
         layoutParams = null
+    }
+
+    /** Floating notes window. FLAG_SECURE keeps it out of the MediaProjection capture. */
+    private fun toggleMemo() {
+        if (memoView != null) {
+            hideMemo()
+            return
+        }
+        if (memoText.isBlank() || !Settings.canDrawOverlays(context)) return
+        val view = TextView(context).apply {
+            text = memoText
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(Color.argb(220, 20, 21, 25))
+            }
+            maxWidth = dp(320)
+            setLineSpacing(0f, 1.15f)
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            },
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_SECURE,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(140)
+        }
+        memoView = view
+        runCatching { windowManager.addView(view, params) }
+    }
+
+    private fun hideMemo() {
+        memoView?.let { runCatching { windowManager.removeView(it) } }
+        memoView = null
     }
 
     fun setPaused(paused: Boolean) {

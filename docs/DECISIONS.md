@@ -53,10 +53,14 @@ The workspace uses upstream's Soft Silver / Graphite tokens, Alibaba PuHuiTi typ
 
 A macOS document app is rarely killed without warning, but Android reclaims background processes routinely. Every committed edit schedules a debounced save (1.2 s). Leaving the editor and the app going to the background (`ON_STOP`) flush immediately. Writes are serialized and atomic (temp file + rename), so a kill mid-write keeps the previous version. The manual "保存" menu item remains for explicit confirmation.
 
-## 12. Recording journals as fragmented MP4
+## 12. The recorder memo is a secure overlay, not a captured window
+
+Upstream's memo is a floating notes panel that its own capture excludes. Android has no per-window capture to exclude, but `FLAG_SECURE` windows are omitted from `MediaProjection` output, so the memo uses the same mechanism as the floating recorder controls. The text is edited on the record setup screen and persisted, then shown by the 备忘 button while recording; the recorded video stays free of it.
+
+## 13. Recording journals as fragmented MP4
 
 Android gives an app no chance to finalize a file when the process is killed, and a regular MP4 keeps its index (`moov`) only in `MediaMuxer.stop()`, so an interrupted recording would be unreadable. Upstream sets `movieFragmentInterval` for the same reason. Capture therefore writes fragmented MP4 (`.part`, 2 s fragments) and a normal stop remuxes the fragments into a regular MP4. Listing or opening a project whose `.part` survives remuxes whatever reached disk, after truncating a half-written box. The final files stay standard MP4 so the editor, thumbnailer and exporter keep their existing fast paths.
 
-## 13. Edge sliders opt out of system back gestures
+## 14. Edge sliders opt out of system back gestures
 
 Full-width sliders put their thumbs inside Android's gesture-navigation edge zone, so dragging a thumb at either end was read as "back" and closed the sheet. `excludeSystemGestures()` (an expect/actual modifier; no-op on platforms without edge gestures) is applied to shared sliders and the export range slider, so drags behave like upstream's pointer drags.

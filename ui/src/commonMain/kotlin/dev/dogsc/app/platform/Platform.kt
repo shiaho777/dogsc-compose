@@ -71,6 +71,7 @@ data class RecordingResult(
 data class AppPreferences(
     val recording: RecordingOptions = RecordingOptions(),
     val exportSoundEnabled: Boolean = true,
+    val memoText: String = "",
 )
 
 /**

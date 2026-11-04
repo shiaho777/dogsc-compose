@@ -130,6 +130,8 @@ class DogScAppState(
         private set
     var exportSoundEnabled by mutableStateOf(true)
         private set
+    var memoText by mutableStateOf("")
+        private set
 
     private var previewJob: Job? = null
     private var playbackJob: Job? = null
@@ -186,7 +188,13 @@ class DogScAppState(
             val prefs = runCatching { platform.loadPreferences() }.getOrNull() ?: return@launch
             recordingOptions = prefs.recording
             exportSoundEnabled = prefs.exportSoundEnabled
+            memoText = prefs.memoText
         }
+    }
+
+    fun updateMemoText(text: String) {
+        memoText = text
+        persistPreferences()
     }
 
     fun updateRecordingDefaults(transform: (RecordingOptions) -> RecordingOptions) {
@@ -203,6 +211,7 @@ class DogScAppState(
         val snapshot = dev.dogsc.app.platform.AppPreferences(
             recording = recordingOptions,
             exportSoundEnabled = exportSoundEnabled,
+            memoText = memoText,
         )
         scope.launch { runCatching { platform.savePreferences(snapshot) } }
     }
