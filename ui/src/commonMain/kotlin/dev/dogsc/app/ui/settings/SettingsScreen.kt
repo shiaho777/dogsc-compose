@@ -30,6 +30,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +58,8 @@ import org.jetbrains.compose.resources.painterResource
 @Composable
 fun SettingsScreen(state: DogScAppState, host: DogScHost) {
     val platform = host.platform
+    var accessibilityEnabled by remember { mutableStateOf(host.isAccessibilityServiceEnabled()) }
+    dev.dogsc.app.ui.OnAppForeground { accessibilityEnabled = host.isAccessibilityServiceEnabled() }
     Column(
         Modifier
             .fillMaxSize()
@@ -106,7 +112,7 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                     icon = Icons.Outlined.TouchApp,
                     title = "触控记录",
                     subtitle = if (platform.supportsTouchCapture) {
-                        if (host.isAccessibilityServiceEnabled()) "已启用，可生成光标轨迹与自动运镜"
+                        if (accessibilityEnabled) "已启用，可生成光标轨迹与自动运镜"
                         else "需要无障碍服务；不启用仍可正常录屏"
                     } else "当前平台不支持",
                     action = { host.openAccessibilitySettings() },

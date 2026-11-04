@@ -56,6 +56,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
     val platform = host.platform
     var options by remember { mutableStateOf(state.recordingOptions) }
     var accessibilityEnabled by remember { mutableStateOf(host.isAccessibilityServiceEnabled()) }
+    dev.dogsc.app.ui.OnAppForeground { accessibilityEnabled = host.isAccessibilityServiceEnabled() }
 
     Column(
         modifier = Modifier

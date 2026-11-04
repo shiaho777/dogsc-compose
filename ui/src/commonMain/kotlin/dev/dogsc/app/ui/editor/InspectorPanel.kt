@@ -1274,11 +1274,22 @@ private fun MotionInspector(state: DogScAppState) {
                     TimelineEditor.updateZoom(current, zoom.id) { it.copy(exitDuration = value.toDouble()) }
                 }
             }, valueLabel = { "${(it * 100).roundToInt() / 100.0}s" })
-            EasingPicker(zoom.easing) { easing ->
-                state.updateProject("调整缩放缓动") { current ->
-                    TimelineEditor.updateZoom(current, zoom.id) { it.copy(easing = easing) }
-                }
-            }
+            EasingPicker(
+                selected = zoom.easing,
+                onSelect = { easing ->
+                    state.updateProject("调整缩放缓动") { current ->
+                        TimelineEditor.updateZoom(current, zoom.id) { it.copy(easing = easing) }
+                    }
+                },
+                customCurve = zoom.customCurve,
+                onCustomCurveChange = { curve ->
+                    state.updateProject("调整自定义缓动") { current ->
+                        TimelineEditor.updateZoom(current, zoom.id) {
+                            it.copy(easing = ZoomEasingPreset.CUSTOM, customCurve = curve)
+                        }
+                    }
+                },
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("类型", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.weight(1f))
@@ -1482,13 +1493,19 @@ private fun updateScreen(state: DogScAppState, id: String, transform: (dev.dogsc
 }
 
 @Composable
-private fun EasingPicker(selected: ZoomEasingPreset, onSelect: (ZoomEasingPreset) -> Unit) {
-    val options = listOf(
-        ZoomEasingPreset.SPRING,
-        ZoomEasingPreset.CUBIC,
-        ZoomEasingPreset.QUINTIC,
-        ZoomEasingPreset.LINEAR,
-    )
+private fun EasingPicker(
+    selected: ZoomEasingPreset,
+    onSelect: (ZoomEasingPreset) -> Unit,
+    customCurve: dev.dogsc.core.model.ZoomBezierCurve? = null,
+    onCustomCurveChange: ((dev.dogsc.core.model.ZoomBezierCurve) -> Unit)? = null,
+) {
+    val options = buildList {
+        add(ZoomEasingPreset.SPRING)
+        add(ZoomEasingPreset.CUBIC)
+        add(ZoomEasingPreset.QUINTIC)
+        add(ZoomEasingPreset.LINEAR)
+        if (onCustomCurveChange != null) add(ZoomEasingPreset.CUSTOM)
+    }
     SectionLabel("缓动")
     Spacer(Modifier.height(4.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1510,6 +1527,22 @@ private fun EasingPicker(selected: ZoomEasingPreset, onSelect: (ZoomEasingPreset
                 Text(easing.shortName, color = DogScColors.PrimaryText, style = MaterialTheme.typography.labelSmall)
             }
         }
+    }
+    if (selected == ZoomEasingPreset.CUSTOM && customCurve != null && onCustomCurveChange != null) {
+        Spacer(Modifier.height(8.dp))
+        Text("贝塞尔控制点", color = DogScColors.TertiaryText, style = MaterialTheme.typography.bodySmall)
+        LabeledSlider("P1 X", customCurve.x1.toFloat(), 0f..1f, { value ->
+            onCustomCurveChange(customCurve.copy(x1 = value.toDouble()))
+        }, valueLabel = { "%.2f".format(it) })
+        LabeledSlider("P1 Y", customCurve.y1.toFloat(), 0f..1f, { value ->
+            onCustomCurveChange(customCurve.copy(y1 = value.toDouble()))
+        }, valueLabel = { "%.2f".format(it) })
+        LabeledSlider("P2 X", customCurve.x2.toFloat(), 0f..1f, { value ->
+            onCustomCurveChange(customCurve.copy(x2 = value.toDouble()))
+        }, valueLabel = { "%.2f".format(it) })
+        LabeledSlider("P2 Y", customCurve.y2.toFloat(), 0f..1f, { value ->
+            onCustomCurveChange(customCurve.copy(y2 = value.toDouble()))
+        }, valueLabel = { "%.2f".format(it) })
     }
 }
 

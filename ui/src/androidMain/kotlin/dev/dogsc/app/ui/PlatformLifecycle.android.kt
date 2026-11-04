@@ -19,3 +19,16 @@ actual fun OnAppBackground(onBackground: () -> Unit) {
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
 }
+
+@Composable
+actual fun OnAppForeground(onForeground: () -> Unit) {
+    val owner = LocalLifecycleOwner.current
+    val callback = rememberUpdatedState(onForeground)
+    DisposableEffect(owner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) callback.value()
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+}

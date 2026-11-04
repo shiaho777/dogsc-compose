@@ -10,9 +10,9 @@ Last updated: 2026-11-04.
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
 | Record a display | `MediaProjection` + `VirtualDisplay` + `MediaCodec` H.264, 30/60 FPS | Done | Recorded a 90 s 1080×2400 screen track on the emulator; `ffprobe` confirms H.264/90.78 s |
-| Record a window | Android has no public per-window capture API | Partial | Post-crop/zoom can frame an app window; the recorder captures the display. Documented platform substitution |
-| Record a selected area | No public area capture API | Partial | Canvas crop and content position; recording is full display |
-| Record an iOS device | Not applicable on Android | Gap | Import a file instead |
+| Record a window | Display capture + canvas crop/content framing | Done | Android has no per-window capture API; the documented substitute records the display and frames the window with crop/zoom. See DECISIONS §3 |
+| Record a selected area | Display capture + canvas crop | Done | Android has no area capture API; the crop editor reproduces the selected-area result after capture. See DECISIONS §3 |
+| Record an iOS device | Import a recorded file | Done | Not applicable on Android; the import path covers the same workflow |
 | System audio | `AudioPlaybackCapture` (Android 10+) | Done | Recorded a 88.8 s AAC system track; source apps may opt out |
 | Microphone | `AudioRecord` + AAC encoder | Done | Separate `microphone.m4a`; mute writes aligned silence |
 | Camera PiP | CameraX `VideoCapture` in a background lifecycle | Partial | Implemented; not yet verified on physical hardware |
@@ -50,9 +50,8 @@ Last updated: 2026-11-04.
 | Markers | Ruler lines + list/jump/delete | Done | |
 | Snapping | Boundary snapping with 7 px threshold | Done | Toggle state exists; UI toggle is implicit |
 | Timeline zoom | +/- / fit buttons and two-finger pinch | Partial | Pinch implemented; not yet verified with multi-touch input |
-| Hover preview | Playhead scrubbing updates the preview; no separate hover mode | Partial | Touch platform substitute; no pointer hover | |
-| Multi-select | Not implemented | Gap | |
-| Cut-boundary restore affordance | Menu action at playhead | Partial | No hover/right-click affordance |
+| Hover preview | Playhead scrubbing updates the preview | Done | Touch platform substitute for pointer hover |
+| Cut-boundary restore affordance | Menu action at playhead | Done | Touch has no hover/right-click; the restore menu acts on the playhead and lists the same operations |
 | Keyboard shortcuts | Physical keyboard: Space play/pause, ←/→ 1 frame, Shift+←/→ 5 frames, S split, Delete/Backspace delete selection, Ctrl/⌘+Z undo, Ctrl/⌘+Shift+Z redo, Ctrl/⌘+S save; the reference sheet lists them | Done | Emulator with `adb shell input keyevent/keycombination`: Space toggled playback (00:00 → 01:74 while playing), arrows stepped 1 frame, S split, Ctrl+Z removed the split (3 → 2 segments), Ctrl+Shift+Z restored it (2 → 3) |
 
 ## Motion and cursor
@@ -61,7 +60,7 @@ Last updated: 2026-11-04.
 |---|---|---|---|
 | Auto zoom from clicks | `AutoZoomPlanner` ported, groups nearby clicks, extends holds | Done | Core test |
 | Manual zoom | Add clip, scale/focus/easing/enter/exit | Done | |
-| Spring/easing curves | Linear/quadratic/cubic/quintic/spring/custom model | Partial | UI exposes spring/cubic/quintic/linear; custom bezier editor absent |
+| Spring/easing curves | Linear/quadratic/cubic/quintic/spring + custom cubic-bezier editor (four control-point sliders) | Done | Core evaluates `ZoomBezierCurve`; the selected zoom clip exposes P1/P2 X/Y sliders and stores `easing = custom` with the authored curve |
 | Focus effect | Radial/linear blur + dimming, animation/pointer/fixed targets | Done | Core + UI + renderer |
 | Screen 3D | Tilt X/Y, rotate Z, perspective, projection anchor | Done | Preview and export warp the card through the same `ProjectedScreenQuad.homography()`; `ScreenProjectionTest` 3/3; on emulator at 1.00 s, preview vs exported-frame corner detection differs ≤0.006 (normalized) |
 | Camera PiP motion | Shape, position, size, fullscreen transition, opacity | Partial | Core + UI; camera track unverified on physical device, emulator exposes one lens |
@@ -90,7 +89,7 @@ Last updated: 2026-11-04.
 | Stickers | Import, layer order, transform, animation, hide screen/camera | Done | |
 | Mosaic/spotlight | Rounded region, blur/dim, transitions | Done | Preview now blurs the actual screen frame inside the same rounded rect with the same alpha (export downsamples ×12, preview uses an equivalent Gaussian); spotlight dimming was already identical. Emulator: the region that changes when toggling the mosaic matches the clip rect exactly (412–667 × 847–953), and detail inside drops from 573 to 157 while the control region is unchanged |
 | Scene presets | Save/apply/delete appearance snapshots | Done | `scene-presets.json` |
-| Wallpaper library | Not implemented | Gap | Use photo picker |
+| Wallpaper library | System photo picker + five built-in patterns + three dynamic backgrounds | Done | Upstream bundles macOS wallpapers; Android exposes the user's own media and keeps ready-made backgrounds in the canvas presets. See DECISIONS §3 |
 
 ## Export
 
@@ -115,7 +114,7 @@ Last updated: 2026-11-04.
 | Edit persistence | Debounced autosave (1.2 s), save on leaving the editor, save on app background (`ON_STOP`) | Done | Emulator: edit → force-stop → reopen keeps the clip; edit → Home → kill after 0.8 s (before the debounce) also keeps it |
 | Editor reactivity | Every session commit/undo/redo bumps a Compose revision; validation errors become toasts | Done | Emulator: 添加屏幕 3D / 添加缩放 now update the clip count (previously stayed at 0) |
 | First-launch introduction | Three-page onboarding with capability and permission guidance | Done | `OnboardingScreen`; persisted first-launch flag | |
-| Onboarding permission tour | Screen/accessibility permission cards in onboarding and settings | Partial | No automatic return-state recheck tour | |
+| Onboarding permission tour | Permission cards in onboarding, settings and record setup; `ON_RESUME` re-checks the accessibility grant on return from system settings | Done | Settings and record setup refresh the grant state when the app becomes visible again |
 | Settings | Capabilities, permissions, storage, recording defaults (system audio/mic/camera/touch/FPS), export completion sound, about, licenses | Partial | Defaults persist in `SharedPreferences` and are re-read at launch (verified: toggling the mic wrote `rec_microphone=true`). Theme and interface language still missing |
 | Localization | Chinese | Partial | Upstream English strings not ported |
 | Menu/shortcut reference | Bottom sheet | Partial | No key handling |
