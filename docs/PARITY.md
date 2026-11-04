@@ -137,14 +137,14 @@ Last updated: 2026-11-04.
 - Audio-only export produced a 190 KB M4A in ~1.2 s on the fast path.
 - 2026-11-04, dedicated AVD `DogSCVerify`: imported 12 s 1280×720 clip, added screen 3D, exported 1280×720/60 H.264+AAC (12.03 s). Projected-quad corners at 1.00 s: preview TL(0.105,0.092) TR(0.940,0.053) BR(0.940,0.947) BL(0.080,0.912); export TL(0.109,0.086) TR(0.941,0.053) BR(0.941,0.950) BL(0.081,0.914).
 - Found and fixed: editor commits did not recompose the UI (every add/edit button looked dead until another state change); no autosave (edits lost on process death); export header ignored current selection and source size; export sheet stayed on 取消导出 after success.
+- Same round: export range slider was only imported, never rendered; timeline drags were cancelled after the first delta and clip moves used per-event deltas; primary edge trimming was unreachable and the validator rejected reorders; mosaic preview was a flat overlay; the canvas colour palette crashed the 画面 inspector; the audio mixer read retimed audio at 1× and mapped gain once per second; AAC priming shifted audio ~43 ms; recordings were unrecoverable after a kill; retimed audio lost pitch. All fixed and listed in the table above.
 
 ## Next gaps to close
 
-1. GPU preview/export renderer; 3D preview/export exactness and long/4K performance.
-2. Physical-device camera verification, lens flip, and camera motion on real hardware.
-3. Continuous touch motion or a stronger gesture-based substitute; accessibility service enablement reliability.
-4. Reliable PCM mixer performance for authored multi-source volume, plus long-recording/4K stress tests.
-5. Pinch timeline zoom, multi-select, hover preview, physical keyboard handling.
-6. Cut-boundary hover/right-click affordance.
-7. Wallpaper library, English localization, tablet visual verification, iOS/desktop/web targets.
-8. Import upstream `.dogsc` project packages and crash-recovery journal.
+1. GPU preview/export renderer; profile 4K and multi-hour exports (CPU Canvas is ~4× realtime at 1080p30).
+2. Physical-device camera verification, lens flip and camera motion on real hardware.
+3. Touch capture on Android < 14 (event anchors only) and OEM accessibility reliability.
+4. Mixed per-segment speeds in preview audio (ExoPlayer rate is player-wide) and PCM mixer performance.
+5. Timeline pinch automation, dynamic-background visual check, tablet layout check.
+6. English localization and a dark appearance setting.
+7. Upstream `.dogsc` package import; iOS/desktop/web targets are outside this Android-first round.
