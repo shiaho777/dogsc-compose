@@ -4,6 +4,9 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import androidx.media3.common.C
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.SonicAudioProcessor
 import dev.dogsc.app.android.AndroidProjectRepository
 import dev.dogsc.app.platform.ExportProgress
 import dev.dogsc.core.model.MediaTimelinePlacement
@@ -28,6 +31,15 @@ import kotlin.math.roundToInt
  * mapped source time, so cuts, trims and speed changes stay in sync without
  * materialising an hour of PCM in memory.
  */
+private const val AAC_FRAME = 1024
+
+/** Typical AAC-LC encoder priming on Android when the probe cannot measure it. */
+private const val DEFAULT_PRIMING_FRAMES = 2048
+
+/** Encoder priming is a property of the device codec, so it is measured once per process. */
+@Volatile
+private var cachedAacPrimingPackets: Int? = null
+
 class AndroidAudioMixer(
     private val context: android.content.Context,
     private val repository: AndroidProjectRepository,
@@ -44,8 +56,29 @@ class AndroidAudioMixer(
         trimStart: Double = 0.0,
         trimEnd: Double? = null,
     ): Boolean {
-        val dir = repository.projectDirectory(project.id)
         val sources = mutableListOf<AudioSource>()
+        try {
+            return mixSources(project, sourceDuration, timelineMap, output, onProgress, trimStart, trimEnd, sources)
+        } finally {
+            // Decoders are a scarce system resource; release them on success, failure and cancel.
+            for (source in sources) {
+                source.stretchers.values.forEach { runCatching { it.release() } }
+                runCatching { source.track.release() }
+            }
+        }
+    }
+
+    private fun mixSources(
+        project: RecorderProject,
+        sourceDuration: Double,
+        timelineMap: TimelineMap,
+        output: File,
+        onProgress: (ExportProgress) -> Unit,
+        trimStart: Double,
+        trimEnd: Double?,
+        sources: MutableList<AudioSource>,
+    ): Boolean {
+        val dir = repository.projectDirectory(project.id)
         val screenFile = project.media?.screen?.let { File(dir, it.relativePath) }
         val systemFile = project.media?.systemAudio?.let { File(dir, it.relativePath) }
         val microphoneFile = project.media?.microphone?.let { File(dir, it.relativePath) }
@@ -144,6 +177,22 @@ class AndroidAudioMixer(
                         var frameFrom = ((from - chunkStart) * outputSampleRate).roundToInt().coerceIn(0, frames)
                         val frameTo = ((to - chunkStart) * outputSampleRate).roundToInt().coerceIn(frameFrom, frames)
                         val scale = slice.sourceTimeScale
+                        if (kotlin.math.abs(scale - 1.0) > 0.000001) {
+                            // Upstream renders retimed audio with a pitch-preserving stretch (.spectral);
+                            // Sonic (WSOLA) is the Android equivalent, one stateful instance per slice.
+                            val stretcher = source.stretchers.getOrPut(slice.id) {
+                                SliceStretcher(source.track, slice, outputSampleRate)
+                            }
+                            val outputTime = chunkStart + frameFrom.toDouble() / outputSampleRate
+                            val sliceOffset = ((outputTime - slice.outputStart) * outputSampleRate).roundToInt().toLong()
+                            val count = frameTo - frameFrom
+                            stretcher.read(sliceOffset, count, sourceBuffer)
+                            val base = frameFrom * outputChannels
+                            for (i in 0 until count * outputChannels) {
+                                mixBuffer[base + i] = mixBuffer[base + i] + sourceBuffer[i] * gain
+                            }
+                            continue
+                        }
                         // Read at most ~1 s of source per call so the decode window stays bounded at 100×.
                         val maxPiece = max(1, (outputSampleRate / max(scale, 1.0)).toInt())
                         while (frameFrom < frameTo) {
@@ -253,92 +302,363 @@ class AndroidAudioMixer(
         stream.write(header.array())
     }
 
+    /**
+     * MediaMuxer cannot write the edit list that tells players to skip AAC encoder priming, so the
+     * priming packets are dropped and the remaining packets are re-stamped from zero. Without this
+     * the whole audio track lands ~43 ms after the video.
+     */
     private fun encodeWavToM4a(wav: File, output: File) {
+        val primingPackets = aacPrimingPackets()
+        val bytesPerFrame = outputChannels * 2
+        val pcmFrames = ((wav.length() - 44).coerceAtLeast(0) / bytesPerFrame)
+        // The encoder holds back roughly its priming delay; trailing silence flushes the real tail out,
+        // and the packet cap trims the silence so the track ends exactly where the mix ends.
+        val maxPackets = (pcmFrames + AAC_FRAME - 1) / AAC_FRAME
+        var flushBytes = (primingPackets + 2L) * AAC_FRAME * bytesPerFrame
+        val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var track = -1
+        var seen = 0
+        var kept = 0L
+        val keptInfo = MediaCodec.BufferInfo()
+        try {
+            RandomAccessFile(wav, "r").use { file ->
+                file.seek(44)
+                encodeAac(
+                    readPcm = { bytes ->
+                        val read = file.read(bytes)
+                        if (read > 0) {
+                            read
+                        } else if (flushBytes > 0) {
+                            val count = min(bytes.size.toLong(), flushBytes).toInt()
+                            java.util.Arrays.fill(bytes, 0, count, 0)
+                            flushBytes -= count
+                            count
+                        } else {
+                            -1
+                        }
+                    },
+                    onFormat = { format ->
+                        if (track < 0) {
+                            track = muxer.addTrack(format)
+                            muxer.start()
+                        }
+                    },
+                    onPacket = { buffer, info ->
+                        if (seen++ >= primingPackets && track >= 0 && kept < maxPackets) {
+                            val ptsUs = kept * AAC_FRAME * 1_000_000L / outputSampleRate
+                            keptInfo.set(info.offset, info.size, ptsUs, info.flags)
+                            muxer.writeSampleData(track, buffer, keptInfo)
+                            kept++
+                        }
+                    },
+                )
+            }
+            if (track >= 0) muxer.stop()
+        } finally {
+            runCatching { muxer.release() }
+        }
+    }
+
+    /** Feeds PCM from [readPcm] (returns bytes read, ≤0 at end) through an AAC-LC encoder. */
+    private fun encodeAac(
+        readPcm: (ByteArray) -> Int,
+        onFormat: (MediaFormat) -> Unit,
+        onPacket: (ByteBuffer, MediaCodec.BufferInfo) -> Unit,
+    ) {
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, outputSampleRate, outputChannels).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, android.media.MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_BIT_RATE, 192_000)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
         }
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        codec.start()
-        val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        var track = -1
-        var started = false
-        val info = MediaCodec.BufferInfo()
-        Log.d("DogSCAudio", "aac encode start")
-        RandomAccessFile(wav, "r").use { file ->
-            file.seek(44)
-            val frameBytes = 1024 * outputChannels * 2
-            val bytes = ByteArray(frameBytes)
-            var ptsUs = 0L
+        try {
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codec.start()
+            val info = MediaCodec.BufferInfo()
+            val bytes = ByteArray(AAC_FRAME * outputChannels * 2)
+            var pending = 0
+            var framesQueued = 0L
+            var inputDone = false
+            var idle = 0
             while (true) {
-                val read = file.read(bytes)
-                if (read <= 0) break
-                val inputIndex = codec.dequeueInputBuffer(10_000)
-                if (inputIndex >= 0) {
-                    val input = codec.getInputBuffer(inputIndex) ?: continue
-                    input.clear()
-                    input.put(bytes, 0, read)
-                    codec.queueInputBuffer(inputIndex, 0, read, ptsUs, 0)
-                    ptsUs += (read / (outputChannels * 2).toLong()) * 1_000_000L / outputSampleRate
+                if (!inputDone) {
+                    if (pending == 0) pending = readPcm(bytes).let { if (it <= 0) -1 else it }
+                    // Keep the chunk until the codec accepts it; a busy codec must never drop PCM.
+                    val inputIndex = codec.dequeueInputBuffer(10_000)
+                    if (inputIndex >= 0) {
+                        val ptsUs = framesQueued * 1_000_000L / outputSampleRate
+                        if (pending < 0) {
+                            codec.queueInputBuffer(inputIndex, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            val input = codec.getInputBuffer(inputIndex) ?: error("AAC encoder input unavailable")
+                            input.clear()
+                            input.put(bytes, 0, pending)
+                            codec.queueInputBuffer(inputIndex, 0, pending, ptsUs, 0)
+                            framesQueued += pending / (outputChannels * 2)
+                            pending = 0
+                        }
+                    }
                 }
+                var finished = false
                 while (true) {
-                    val index = codec.dequeueOutputBuffer(info, 0)
-                    when {
-                        index == MediaCodec.INFO_TRY_AGAIN_LATER -> break
-                        index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            if (!started) {
-                                track = muxer.addTrack(codec.outputFormat)
-                                muxer.start()
-                                started = true
-                            }
+                    val index = codec.dequeueOutputBuffer(info, if (inputDone) 10_000 else 0)
+                    if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                        if (inputDone && ++idle > 500) error("AAC encoder stalled")
+                        break
+                    }
+                    idle = 0
+                    if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        onFormat(codec.outputFormat)
+                    } else if (index >= 0) {
+                        val buffer = codec.getOutputBuffer(index)
+                        val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                        if (buffer != null && info.size > 0 && !isConfig) {
+                            buffer.position(info.offset)
+                            buffer.limit(info.offset + info.size)
+                            onPacket(buffer, info)
                         }
-                        index >= 0 -> {
-                            val buffer = codec.getOutputBuffer(index)
-                            if (buffer != null && info.size > 0 && started) {
-                                buffer.position(info.offset)
-                                buffer.limit(info.offset + info.size)
-                                muxer.writeSampleData(track, buffer, info)
-                            }
-                            codec.releaseOutputBuffer(index, false)
+                        codec.releaseOutputBuffer(index, false)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                            finished = true
+                            break
                         }
                     }
                 }
+                if (finished) break
             }
-            val inputIndex = codec.dequeueInputBuffer(10_000)
-            if (inputIndex >= 0) {
-                codec.queueInputBuffer(inputIndex, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-            }
-            while (true) {
-                val index = codec.dequeueOutputBuffer(info, 10_000)
-                if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED && !started) {
-                    track = muxer.addTrack(codec.outputFormat)
-                    muxer.start()
-                    started = true
-                } else if (index >= 0) {
-                    val buffer = codec.getOutputBuffer(index)
-                    if (buffer != null && info.size > 0 && started) {
-                        buffer.position(info.offset)
-                        buffer.limit(info.offset + info.size)
-                        muxer.writeSampleData(track, buffer, info)
-                    }
-                    codec.releaseOutputBuffer(index, false)
-                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+        } finally {
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+        }
+    }
+
+    /** Number of leading AAC packets that only carry encoder priming on this device. */
+    private fun aacPrimingPackets(): Int {
+        cachedAacPrimingPackets?.let { return it }
+        val delay = runCatching { measureAacDelayFrames() }
+            .onFailure { Log.w("DogSCAudio", "AAC delay probe failed", it) }
+            .getOrNull()
+        val packets = if (delay != null) (delay + AAC_FRAME / 2) / AAC_FRAME else DEFAULT_PRIMING_FRAMES / AAC_FRAME
+        Log.d("DogSCAudio", "AAC priming delay=$delay frames → drop $packets packets")
+        cachedAacPrimingPackets = packets
+        return packets
+    }
+
+    /** Encodes and decodes a noise burst, then finds the lag that best aligns output with input. */
+    private fun measureAacDelayFrames(): Int? {
+        val frames = outputSampleRate / 2
+        val random = java.util.Random(7)
+        val probe = FloatArray(frames) { (random.nextFloat() * 2f - 1f) * 0.3f }
+        val pcm = ByteBuffer.allocate(frames * outputChannels * 2).order(ByteOrder.LITTLE_ENDIAN)
+        for (value in probe) {
+            val sample = (value * 32767f).roundToInt().toShort()
+            repeat(outputChannels) { pcm.putShort(sample) }
+        }
+        val pcmBytes = pcm.array()
+        var offset = 0
+        var format: MediaFormat? = null
+        val packets = ArrayList<ByteArray>()
+        encodeAac(
+            readPcm = { dst ->
+                val count = min(dst.size, pcmBytes.size - offset)
+                if (count <= 0) -1 else {
+                    System.arraycopy(pcmBytes, offset, dst, 0, count)
+                    offset += count
+                    count
                 }
+            },
+            onFormat = { format = it },
+            onPacket = { buffer, _ -> packets += ByteArray(buffer.remaining()).also { buffer.get(it) } },
+        )
+        val decoded = decodeAacFirstChannel(format ?: return null, packets) ?: return null
+        val start = 4096
+        val window = 4096
+        val maxLag = 6144
+        if (decoded.size < start + window + maxLag) return null
+        var probeEnergy = 0.0
+        for (n in start until start + window) probeEnergy += probe[n].toDouble() * probe[n]
+        var bestLag = -1
+        var bestScore = 0.0
+        for (lag in 0..maxLag) {
+            var dot = 0.0
+            var energy = 0.0
+            for (n in start until start + window) {
+                val y = decoded[n + lag].toDouble()
+                dot += probe[n] * y
+                energy += y * y
+            }
+            val score = dot / kotlin.math.sqrt(energy * probeEnergy + 1e-12)
+            if (score > bestScore) {
+                bestScore = score
+                bestLag = lag
             }
         }
-        runCatching { codec.stop() }
-        runCatching { codec.release() }
-        if (started) runCatching { muxer.stop() }
-        runCatching { muxer.release() }
+        return if (bestScore > 0.5) bestLag else null
+    }
+
+    private fun decodeAacFirstChannel(format: MediaFormat, packets: List<ByteArray>): FloatArray? {
+        val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        var out = FloatArray(packets.size * AAC_FRAME + AAC_FRAME)
+        var size = 0
+        try {
+            codec.configure(format, null, null, 0)
+            codec.start()
+            val info = MediaCodec.BufferInfo()
+            var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            var next = 0
+            var inputDone = false
+            var idle = 0
+            while (idle < 300) {
+                if (!inputDone) {
+                    val inputIndex = codec.dequeueInputBuffer(10_000)
+                    if (inputIndex >= 0) {
+                        if (next < packets.size) {
+                            val input = codec.getInputBuffer(inputIndex) ?: return null
+                            input.clear()
+                            input.put(packets[next])
+                            codec.queueInputBuffer(inputIndex, 0, packets[next].size, next * AAC_FRAME * 1_000_000L / outputSampleRate, 0)
+                            next++
+                        } else {
+                            codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        }
+                    }
+                }
+                val index = codec.dequeueOutputBuffer(info, 10_000)
+                when {
+                    index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
+                        channels = codec.outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    index >= 0 -> {
+                        idle = 0
+                        val output = codec.getOutputBuffer(index)
+                        if (output != null && info.size > 0) {
+                            output.position(info.offset)
+                            output.limit(info.offset + info.size)
+                            val shorts = output.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                            val frames = shorts.remaining() / channels
+                            if (size + frames > out.size) out = out.copyOf(max(out.size * 2, size + frames))
+                            for (i in 0 until frames) out[size + i] = shorts.get(i * channels) / 32768f
+                            size += frames
+                        }
+                        codec.releaseOutputBuffer(index, false)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return out.copyOf(size)
+                    }
+                    else -> idle++
+                }
+            }
+            return null
+        } finally {
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+        }
     }
 
     private data class AudioSource(
         val track: PcmTrack,
         val isSystem: Boolean,
         val slices: List<TimelineMediaSlice>,
-    )
+    ) {
+        val stretchers = HashMap<String, SliceStretcher>()
+    }
+}
+
+/**
+ * Pitch-preserving time stretch for one retimed slice. Source audio is read at 1× and fed
+ * through Sonic at the slice's speed; output frames are handed out sequentially.
+ */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+private class SliceStretcher(
+    private val track: PcmTrack,
+    private val slice: TimelineMediaSlice,
+    private val outputRate: Int,
+) {
+    private val processor = SonicAudioProcessor().apply {
+        setSpeed(slice.sourceTimeScale.toFloat())
+        configure(AudioProcessor.AudioFormat(outputRate, 2, C.ENCODING_PCM_16BIT))
+        flush(AudioProcessor.StreamMetadata.DEFAULT)
+    }
+    private val feedFrames = 4096
+    private val readBuffer = FloatArray(feedFrames * 2)
+    private val inputBytes = ByteBuffer.allocateDirect(feedFrames * 4).order(ByteOrder.nativeOrder())
+    private var queue = FloatArray(feedFrames * 4)
+    private var queueStart = 0
+    private var queueEnd = 0
+    private var sourceCursor = slice.sourceStart
+    private var produced = -1L
+    private var endQueued = false
+    private var ended = false
+
+    fun read(sliceOffsetFrames: Long, frames: Int, output: FloatArray) {
+        if (produced < 0 || kotlin.math.abs(sliceOffsetFrames - produced) > 2) restart(sliceOffsetFrames)
+        var filled = 0
+        while (filled < frames) {
+            val available = (queueEnd - queueStart) / 2
+            if (available > 0) {
+                val take = min(available, frames - filled)
+                System.arraycopy(queue, queueStart, output, filled * 2, take * 2)
+                queueStart += take * 2
+                filled += take
+                continue
+            }
+            if (ended) {
+                java.util.Arrays.fill(output, filled * 2, frames * 2, 0f)
+                break
+            }
+            feed()
+        }
+        produced = sliceOffsetFrames + frames
+    }
+
+    private fun restart(sliceOffsetFrames: Long) {
+        processor.flush(AudioProcessor.StreamMetadata.DEFAULT)
+        queueStart = 0
+        queueEnd = 0
+        endQueued = false
+        ended = false
+        sourceCursor = slice.sourceStart + sliceOffsetFrames.toDouble() / outputRate * slice.sourceTimeScale
+        produced = sliceOffsetFrames
+    }
+
+    private fun feed() {
+        val remaining = ((slice.sourceEnd - sourceCursor) * outputRate).toInt()
+        if (remaining > 0) {
+            val n = min(feedFrames, remaining)
+            track.readStereo(sourceCursor, n, outputRate, 1.0, readBuffer)
+            inputBytes.clear()
+            for (i in 0 until n * 2) {
+                inputBytes.putShort((readBuffer[i].coerceIn(-1f, 1f) * 32767f).roundToInt().toShort())
+            }
+            inputBytes.flip()
+            processor.queueInput(inputBytes)
+            sourceCursor += n.toDouble() / outputRate
+        } else if (!endQueued) {
+            processor.queueEndOfStream()
+            endQueued = true
+        }
+        drain()
+        if (endQueued && processor.isEnded) ended = true
+    }
+
+    private fun drain() {
+        val out = processor.output
+        if (!out.hasRemaining()) return
+        val shorts = out.order(ByteOrder.nativeOrder()).asShortBuffer()
+        val count = shorts.remaining()
+        if (queueStart > 0) {
+            System.arraycopy(queue, queueStart, queue, 0, queueEnd - queueStart)
+            queueEnd -= queueStart
+            queueStart = 0
+        }
+        if (queueEnd + count > queue.size) queue = queue.copyOf(max(queue.size * 2, queueEnd + count))
+        for (i in 0 until count) queue[queueEnd + i] = shorts.get(i) / 32768f
+        queueEnd += count
+        out.position(out.limit())
+    }
+
+    fun release() {
+        processor.reset()
+    }
 }
 
 private class PcmTrack(file: File) {
@@ -371,7 +691,6 @@ private class PcmTrack(file: File) {
         codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME) ?: "audio/mp4a-latm")
         codec.configure(format, null, null, 0)
         codec.start()
-        Log.d("DogSCAudio", "PcmTrack init rate=$sourceSampleRate ch=$sourceChannels dur=$durationSeconds")
     }
 
     /** Reads [frames] output frames starting at [sourceTime], advancing [rate] source seconds per output second. */

@@ -40,6 +40,8 @@ Environment used: Android 15 emulator, hardware GPU (`-gpu host`), 1080×2400.
 4. **Editor**: scrub, play, split, trim, restore cuts, add zoom/screen 3D/mosaic, toggle waveform, add markers, save scene preset.
 5. **Export**: 1080p/30 MP4. `ffprobe` confirms H.264 1920×1080, 30 FPS, AAC, 12.03 s. Extract a frame and compare background, card, radius and shadow with the editor.
 6. **Audio-only**: fast path produced a 190 KB M4A for 12 s.
+7. **Audio timing**: import a stepped-tone clip (`ffmpeg` sine, +100 Hz per source second), split at a non-whole second, set one segment to 2×, export. Decode to mono 48 kHz and run short-window FFT: every tone switch must land within one FFT hop of the expected output time, the retimed segment must keep its source pitch, and the AAC track duration must match the video within one AAC frame (21.3 ms).
+8. **Segment volume**: set one primary segment's system volume to 23 %, export, and measure mean volume per time window with `ffmpeg -af volumedetect`; the overridden window must drop by 20·log10(0.23) ≈ −12.8 dB.
 7. **Onboarding**: first-launch three-page flow renders and persists the seen flag.
 8. **Timeline polish**: real filmstrip frames, waveform toggle, marker sheet, scene preset sheet, per-segment speed/audio controls and export range slider are present in the editor.
 9. **3D preview vs export** (dedicated AVD `DogSCVerify`, `emulator-5556`): add screen 3D at 0 s, step the playhead to 1.00 s, screencap; export 1280×720/60; extract the 1.00 s frame with ffmpeg. Detect the saturated test-pattern corners in the preview canvas region and in the exported frame with PIL. Normalized corners differ by ≤0.006.
