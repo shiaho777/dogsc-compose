@@ -53,7 +53,7 @@ Last updated: 2026-11-04.
 | Hover preview | Playhead scrubbing updates the preview; no separate hover mode | Partial | Touch platform substitute; no pointer hover | |
 | Multi-select | Not implemented | Gap | |
 | Cut-boundary restore affordance | Menu action at playhead | Partial | No hover/right-click affordance |
-| Keyboard shortcuts | Reference sheet only | Partial | No physical keyboard handling yet |
+| Keyboard shortcuts | Physical keyboard: Space play/pause, ←/→ 1 frame, Shift+←/→ 5 frames, S split, Delete/Backspace delete selection, Ctrl/⌘+Z undo, Ctrl/⌘+Shift+Z redo, Ctrl/⌘+S save; the reference sheet lists them | Done | Emulator with `adb shell input keyevent/keycombination`: Space toggled playback (00:00 → 01:74 while playing), arrows stepped 1 frame, S split, Ctrl+Z removed the split (3 → 2 segments), Ctrl+Shift+Z restored it (2 → 3) |
 
 ## Motion and cursor
 

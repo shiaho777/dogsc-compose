@@ -56,8 +56,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -85,7 +98,16 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
     var showInspectorSheet by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(DogScColors.Background)) {
+    val keyFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { keyFocus.requestFocus() } }
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .background(DogScColors.Background)
+            .focusRequester(keyFocus)
+            .focusable()
+            .onPreviewKeyEvent { event -> handleEditorKey(state, event) },
+    ) {
         val wide = maxWidth >= 880.dp
         Column(Modifier.fillMaxSize()) {
             EditorTopBar(
@@ -647,6 +669,23 @@ private fun RenameProjectDialog(initial: String, onDismiss: () -> Unit, onConfir
     )
 }
 
+/** Physical-keyboard shortcuts; the shortcut sheet documents exactly these bindings. */
+private fun handleEditorKey(state: DogScAppState, event: KeyEvent): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    val command = event.isCtrlPressed || event.isMetaPressed
+    return when {
+        command && event.key == Key.Z && event.isShiftPressed -> { state.redo(); true }
+        command && event.key == Key.Z -> { state.undo(); true }
+        command && event.key == Key.S -> { state.saveProject(showConfirmation = true); true }
+        event.key == Key.Spacebar -> { state.togglePlayback(); true }
+        event.key == Key.DirectionLeft -> { state.stepFrames(if (event.isShiftPressed) -5 else -1); true }
+        event.key == Key.DirectionRight -> { state.stepFrames(if (event.isShiftPressed) 5 else 1); true }
+        event.key == Key.S -> { state.splitAtPlayhead(); true }
+        event.key == Key.Delete || event.key == Key.Backspace -> { state.deleteSelection(); true }
+        else -> false
+    }
+}
+
 @Composable
 private fun ShortcutSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = DogScColors.Panel) {
@@ -659,6 +698,9 @@ private fun ShortcutSheet(onDismiss: () -> Unit) {
                 "⇧ + ← / →" to "移动 5 帧",
                 "S" to "在播放头分割",
                 "Delete" to "删除选中项",
+                "Ctrl/⌘ + Z" to "撤销",
+                "Ctrl/⌘ + Shift + Z" to "重做",
+                "Ctrl/⌘ + S" to "保存项目",
                 "双指捏合时间线" to "缩放时间线",
                 "拖动播放头" to "定位画面",
                 "点击片段" to "选中并打开对应参数",
