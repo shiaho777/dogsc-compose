@@ -5,7 +5,6 @@ import android.hardware.display.VirtualDisplay
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
-import android.media.MediaMuxer
 import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.Looper
@@ -24,11 +23,10 @@ class ScreenRecorder(
 ) {
     private val codec: MediaCodec
     private val inputSurface: Surface
-    private val muxer: MediaMuxer
+    private val writer: FragmentedRecordingWriter
     private var virtualDisplay: VirtualDisplay? = null
     private var drainThread: Thread? = null
     @Volatile private var running = false
-    @Volatile private var trackIndex = -1
     @Volatile private var muxerStarted = false
     @Volatile var lastPresentationTimeUs: Long = 0
         private set
@@ -46,7 +44,8 @@ class ScreenRecorder(
         codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         inputSurface = codec.createInputSurface()
-        muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        // Fragments are flushed every 2 s, so a crash keeps all footage up to the last fragment.
+        writer = FragmentedRecordingWriter(FragmentedRecordingRecovery.partFileFor(outputFile))
         codec.start()
     }
 
@@ -82,8 +81,8 @@ class ScreenRecorder(
         runCatching { codec.stop() }
         runCatching { codec.release() }
         runCatching { inputSurface.release() }
-        if (muxerStarted) runCatching { muxer.stop() }
-        runCatching { muxer.release() }
+        writer.closeFragments()
+        FragmentedRecordingRecovery.finish(FragmentedRecordingRecovery.partFileFor(outputFile), outputFile)
     }
 
     private fun drainLoop() {
@@ -94,17 +93,14 @@ class ScreenRecorder(
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     if (!muxerStarted) {
-                        trackIndex = muxer.addTrack(codec.outputFormat)
-                        muxer.start()
+                        writer.addTrack(codec.outputFormat)
                         muxerStarted = true
                     }
                 }
                 index >= 0 -> {
                     val buffer = codec.getOutputBuffer(index)
                     if (buffer != null && info.size > 0 && muxerStarted) {
-                        buffer.position(info.offset)
-                        buffer.limit(info.offset + info.size)
-                        muxer.writeSampleData(trackIndex, buffer, info)
+                        writer.writeSample(buffer, info)
                         lastPresentationTimeUs = max(lastPresentationTimeUs, info.presentationTimeUs)
                     }
                     codec.releaseOutputBuffer(index, false)

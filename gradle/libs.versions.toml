@@ -29,6 +29,7 @@ androidx-datastore-preferences = { module = "androidx.datastore:datastore-prefer
 androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "androidxMedia3" }
 androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "androidxMedia3" }
 androidx-media3-common = { module = "androidx.media3:media3-common", version.ref = "androidxMedia3" }
+androidx-media3-muxer = { module = "androidx.media3:media3-muxer", version.ref = "androidxMedia3" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "camerax" }
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }

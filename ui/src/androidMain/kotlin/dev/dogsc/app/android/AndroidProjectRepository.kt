@@ -6,8 +6,11 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.Log
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
+import dev.dogsc.app.android.AndroidRecorderManager
+import dev.dogsc.app.android.recording.FragmentedRecordingRecovery
 import androidx.compose.ui.graphics.asImageBitmap
 import dev.dogsc.app.platform.LoadedProject
 import dev.dogsc.app.platform.MediaProbe
@@ -294,6 +297,21 @@ class AndroidProjectRepository(private val context: Context) {
     fun loadPointerEvents(project: RecorderProject): List<PointerEventRecord> =
         readPointerEvents(project, projectDirectory(project.id))
 
+    /**
+     * A recording killed mid-way leaves fragmented `.part` files next to the final media.
+     * Opening the project remuxes whatever footage reached disk instead of showing an empty editor.
+     */
+    private fun recoverInterruptedMedia(dir: File, project: RecorderProject) {
+        val media = project.media ?: return
+        val references = listOfNotNull(media.screen, media.camera, media.microphone, media.systemAudio)
+        for (reference in references) {
+            val target = File(dir, reference.relativePath)
+            runCatching { FragmentedRecordingRecovery.recover(target) }
+                .onSuccess { if (it) Log.d("DogSCRecovery", "recovered ${reference.relativePath}") }
+                .onFailure { Log.w("DogSCRecovery", "recovery failed for ${reference.relativePath}", it) }
+        }
+    }
+
     private fun loadSummary(dir: File): ProjectSummary? {
         val manifest = File(dir, "project.json")
         if (!manifest.exists()) return null
@@ -301,6 +319,9 @@ class AndroidProjectRepository(private val context: Context) {
         val project = if (decoded.title.all { it.isDigit() } && decoded.title.isNotBlank()) {
             decoded.copy(title = "导入的视频")
         } else decoded
+        if (AndroidRecorderManager.activeProjectId != project.id) {
+            recoverInterruptedMedia(dir, project)
+        }
         val screenFile = File(dir, project.media?.screen?.relativePath ?: "")
         val info = probe(screenFile)
         val thumb = File(dir, "thumb.jpg")

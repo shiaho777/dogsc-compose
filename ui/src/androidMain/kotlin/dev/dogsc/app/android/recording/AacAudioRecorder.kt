@@ -9,7 +9,6 @@ import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
-import android.media.MediaMuxer
 import android.media.projection.MediaProjection
 import android.os.Build
 import java.io.File
@@ -33,11 +32,10 @@ class AacAudioRecorder(
     private val channels: Int = 1,
 ) {
     private val codec: MediaCodec
-    private val muxer: MediaMuxer
+    private val writer: FragmentedRecordingWriter
     private var audioRecord: AudioRecord? = null
     private var thread: Thread? = null
     @Volatile private var running = false
-    @Volatile private var trackIndex = -1
     @Volatile private var muxerStarted = false
     @Volatile var muted = false
     @Volatile var lastPresentationTimeUs: Long = 0
@@ -53,7 +51,7 @@ class AacAudioRecorder(
         codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         codec.start()
-        muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        writer = FragmentedRecordingWriter(FragmentedRecordingRecovery.partFileFor(outputFile))
     }
 
     @SuppressLint("MissingPermission")
@@ -117,8 +115,8 @@ class AacAudioRecorder(
         drain(true)
         runCatching { codec.stop() }
         runCatching { codec.release() }
-        if (muxerStarted) runCatching { muxer.stop() }
-        runCatching { muxer.release() }
+        writer.closeFragments()
+        FragmentedRecordingRecovery.finish(FragmentedRecordingRecovery.partFileFor(outputFile), outputFile)
     }
 
     private fun pump(bufferSize: Int) {
@@ -174,17 +172,14 @@ class AacAudioRecorder(
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> if (!endOfStream) return
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     if (!muxerStarted) {
-                        trackIndex = muxer.addTrack(codec.outputFormat)
-                        muxer.start()
+                        writer.addTrack(codec.outputFormat)
                         muxerStarted = true
                     }
                 }
                 index >= 0 -> {
                     val output = codec.getOutputBuffer(index)
                     if (output != null && info.size > 0 && muxerStarted) {
-                        output.position(info.offset)
-                        output.limit(info.offset + info.size)
-                        muxer.writeSampleData(trackIndex, output, info)
+                        writer.writeSample(output, info)
                         lastPresentationTimeUs = max(lastPresentationTimeUs, info.presentationTimeUs)
                     }
                     codec.releaseOutputBuffer(index, false)

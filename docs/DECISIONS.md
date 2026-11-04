@@ -53,6 +53,10 @@ The workspace uses upstream's Soft Silver / Graphite tokens, Alibaba PuHuiTi typ
 
 A macOS document app is rarely killed without warning, but Android reclaims background processes routinely. Every committed edit schedules a debounced save (1.2 s). Leaving the editor and the app going to the background (`ON_STOP`) flush immediately. Writes are serialized and atomic (temp file + rename), so a kill mid-write keeps the previous version. The manual "保存" menu item remains for explicit confirmation.
 
-## 12. Edge sliders opt out of system back gestures
+## 12. Recording journals as fragmented MP4
+
+Android gives an app no chance to finalize a file when the process is killed, and a regular MP4 keeps its index (`moov`) only in `MediaMuxer.stop()`, so an interrupted recording would be unreadable. Upstream sets `movieFragmentInterval` for the same reason. Capture therefore writes fragmented MP4 (`.part`, 2 s fragments) and a normal stop remuxes the fragments into a regular MP4. Listing or opening a project whose `.part` survives remuxes whatever reached disk, after truncating a half-written box. The final files stay standard MP4 so the editor, thumbnailer and exporter keep their existing fast paths.
+
+## 13. Edge sliders opt out of system back gestures
 
 Full-width sliders put their thumbs inside Android's gesture-navigation edge zone, so dragging a thumb at either end was read as "back" and closed the sheet. `excludeSystemGestures()` (an expect/actual modifier; no-op on platforms without edge gestures) is applied to shared sliders and the export range slider, so drags behave like upstream's pointer drags.

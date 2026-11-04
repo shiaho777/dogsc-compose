@@ -36,6 +36,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -244,6 +245,10 @@ class AndroidRecorderManager(
         const val REQUEST_PERMISSIONS = 9002
         @Volatile var instance: AndroidRecorderManager? = null
         @Volatile private var pendingOptionsStatic: RecordingOptions? = null
+
+        /** Project currently being written; the library must not remux its live `.part` files. */
+        @Volatile var activeProjectId: String? = null
+            internal set
     }
 }
 
@@ -286,9 +291,10 @@ internal class RecordingCoordinator(
     private val projectTitle = "录制 " + SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
 
     fun start() {
-        scope.launch(Dispatchers.IO) {
-            runCatching { repository.saveProject(preliminaryProject()) }
-        }
+        AndroidRecorderManager.activeProjectId = projectId
+        // The journal must exist before the first fragment is written; otherwise a crash in the
+        // first moments would leave an orphan media directory that the library cannot surface.
+        runCatching { runBlocking(Dispatchers.IO) { repository.saveProject(preliminaryProject()) } }
         runCatching {
             screenRecorder = ScreenRecorder(projection, width, height, densityDpi, options.frameRate, screenFile).also { it.start() }
         }.onFailure {
@@ -416,6 +422,7 @@ internal class RecordingCoordinator(
     fun elapsedSecondsPublic(): Double = elapsedSeconds()
 
     fun discard() {
+        AndroidRecorderManager.activeProjectId = null
         stopping = true
         timerJob?.cancel()
         overlay?.hide()
@@ -512,6 +519,8 @@ internal class RecordingCoordinator(
         } catch (error: Throwable) {
             Log.e("DogScRecording", "finalize failed", error)
             onError("录制已结束，但项目保存失败：${error.message}")
+        } finally {
+            AndroidRecorderManager.activeProjectId = null
         }
     }
 

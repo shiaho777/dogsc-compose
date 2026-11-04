@@ -21,7 +21,7 @@ Last updated: 2026-11-04.
 | Recording markers | Marker button/notification/overlay, persisted and shown on timeline | Done | `RecordingMarker` + marker sheet |
 | Floating recorder controls | `TYPE_APPLICATION_OVERLAY` with `FLAG_SECURE`, draggable pill | Done | Excluded from capture; notification fallback when overlay permission is denied |
 | Recording memo/teleprompter | Not implemented | Gap | |
-| Crash recovery journal | Preliminary project JSON is written at recording start; an interrupted recording appears in the library and can be opened | Partial | Shell implemented; interrupted-recording recovery not yet exercised |
+| Crash recovery journal | Project JSON is written before capture starts; screen and audio record into fragmented MP4 (`.part`, 2 s fragments); normal stop remuxes to a standard MP4; opening or listing a crashed project remuxes what reached disk | Done | Emulator: killed the process mid-recording (31.9 s captured) → library shows the project, opening it recovers a playable 31.88 s H.264 + AAC file and deletes the `.part`. Also truncated the `.part` by 300 bytes mid-fragment: recovery cut the file at the last complete box (4.10 MB → 1.94 MB) and still produced a playable file. Normal stop verified to yield a standard MP4 (moov, no moof) at 32.95 s |
 
 ## Primary editing
 
