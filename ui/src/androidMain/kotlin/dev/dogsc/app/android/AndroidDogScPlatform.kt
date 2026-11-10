@@ -182,6 +182,10 @@ class AndroidDogScPlatform(
         previewAudio.release()
     }
 
+    override fun releasePreviewFrames() {
+        repository.releasePreviewFrames()
+    }
+
     override fun playExportSound() {
         runCatching {
             val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)

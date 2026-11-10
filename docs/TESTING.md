@@ -71,3 +71,9 @@ Screenshots are judged by UI dumps (`uiautomator dump`) and PIL pixel sampling, 
 - Multi-window/tablet layout has not been visually verified on a tablet.
 - The PCM mixer path (multiple sources or non-default volume) needs a dedicated timing test.
 - No automated UI/instrumentation tests yet; the current evidence is build + core tests + manual emulator runs + extracted export frames.
+
+## Performance checks
+
+- `adb shell dumpsys gfxinfo dev.dogsc.app reset`, play for a few seconds, then `dumpsys gfxinfo dev.dogsc.app` — look at the 50th/90th percentiles and "Slow issue draw commands".
+- Preview decoding is the hot path: a `MediaMetadataRetriever` per request cost 50–110 ms/frame on a 1080×2400 recording. The editor now uses one persistent MediaCodec decoder per file (`PreviewFrameDecoder`) with scaled ring buffers; a full-layer shadow blur was replaced by expanding strokes.
+- `adb shell dumpsys audio` while playing shows the preview `AudioTrack` state; Space pauses it.

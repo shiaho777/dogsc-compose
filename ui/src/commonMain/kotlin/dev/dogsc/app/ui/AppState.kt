@@ -134,6 +134,8 @@ class DogScAppState(
         private set
 
     private var previewJob: Job? = null
+    private var pendingPreviewTime: Double? = null
+    private var previewMediaSignature: String? = null
     private var playbackJob: Job? = null
     private var toastJob: Job? = null
     private var exportJob: Job? = null
@@ -275,6 +277,7 @@ class DogScAppState(
     fun openLibrary() {
         stopPlayback()
         platform.releasePreviewAudio()
+        platform.releasePreviewFrames()
         flushPendingSave()
         screen = AppScreen.Library
         session = null
@@ -318,6 +321,7 @@ class DogScAppState(
             canvasPane = CanvasPane.BACKGROUND
             screen = AppScreen.Editor(loaded.project.id)
             requestPreviewFrame(0.0)
+            refreshStaticMedia(force = true)
             waveform = null
             filmstripFrames = emptyList()
             scope.launch { filmstripFrames = platform.loadFilmstrip(loaded.project, 12) }
@@ -341,6 +345,7 @@ class DogScAppState(
             selection = EditorSelection.None
             screen = AppScreen.Editor(loaded.project.id)
             requestPreviewFrame(0.0)
+            refreshStaticMedia(force = true)
             showToast("已导入「${loaded.project.title}」")
         }
     }
@@ -459,6 +464,7 @@ class DogScAppState(
         selection = EditorSelection.None
         screen = AppScreen.Editor(loaded.project.id)
         requestPreviewFrame(0.0)
+        refreshStaticMedia(force = true)
         filmstripFrames = emptyList()
         scope.launch { filmstripFrames = platform.loadFilmstrip(loaded.project, 12) }
         refreshProjects()
@@ -549,6 +555,7 @@ class DogScAppState(
 
     private fun onProjectChanged() {
         requestPreviewFrame(playhead)
+        refreshStaticMedia()
         if (showWaveform) requestWaveform()
         scheduleAutosave()
     }
@@ -606,12 +613,14 @@ class DogScAppState(
         project?.let { platform.startPreviewAudio(it, sourceDuration, playhead) }
         playbackJob?.cancel()
         playbackJob = scope.launch {
-            var lastFrameRequest = 0.0
+            // Monotonic clock instead of "playhead += 0.016": no drift and no dependence on
+            // how long each frame's work takes.
+            val origin = playhead
+            val startedAt = kotlin.time.TimeSource.Monotonic.markNow()
+            var lastFrameRequest = -1.0
             while (isPlaying) {
-                val started = kotlin.time.TimeSource.Monotonic.markNow()
                 delay(16)
-                val elapsed = started.elapsedNow().inWholeMilliseconds / 1000.0
-                val next = playhead + 0.016
+                val next = origin + startedAt.elapsedNow().inWholeMicroseconds / 1_000_000.0
                 if (next >= outputDuration) {
                     playhead = outputDuration
                     isPlaying = false
@@ -620,7 +629,7 @@ class DogScAppState(
                     break
                 }
                 playhead = next
-                if (playhead - lastFrameRequest >= 0.08) {
+                if (playhead - lastFrameRequest >= 0.033) {
                     lastFrameRequest = playhead
                     requestPreviewFrame(playhead)
                 }
@@ -637,27 +646,55 @@ class DogScAppState(
 
     fun requestPreviewFrame(time: Double) {
         val project = project ?: return
-        previewJob?.cancel()
+        // Coalesce requests: while a frame is decoding, keep only the newest target instead of
+        // cancelling and restarting a decode (which leaves the native retriever working anyway).
+        pendingPreviewTime = time
+        if (previewJob?.isActive == true) return
         previewJob = scope.launch {
-            isPreviewLoading = previewFrame == null
-            val frame = platform.loadThumbnail(project, time)
-            if (frame != null) previewFrame = frame
-            if (project.media?.camera != null && !project.camera.isHidden) {
-                cameraPreviewFrame = platform.loadCameraThumbnail(project, time)
-            } else {
-                cameraPreviewFrame = null
+            while (true) {
+                val target = pendingPreviewTime ?: break
+                pendingPreviewTime = null
+                val current = project ?: break
+                isPreviewLoading = previewFrame == null
+                val frame = platform.loadThumbnail(current, target)
+                if (pendingPreviewTime == null) {
+                    if (frame != null) previewFrame = frame
+                    cameraPreviewFrame = if (current.media?.camera != null && !current.camera.isHidden) {
+                        platform.loadCameraThumbnail(current, target)
+                    } else {
+                        null
+                    }
+                    isPreviewLoading = false
+                }
+                if (pendingPreviewTime == null) break
             }
-            if (project.canvas.backgroundSource.usesWallpaperMedia) {
-                backgroundPreviewFrame = platform.loadBackgroundBitmap(project)
+        }
+    }
+
+    /**
+     * Stickers and custom backgrounds only change with the project, never with the playhead;
+     * loading them once per edit keeps playback from re-decoding them every frame.
+     */
+    fun refreshStaticMedia(force: Boolean = false) {
+        val current = project ?: return
+        val signature = buildString {
+            append(current.canvas.backgroundSource)
+            append('|')
+            current.timeline.stickerClips.forEach { append(it.relativePath).append(',') }
+        }
+        if (!force && signature == previewMediaSignature) return
+        previewMediaSignature = signature
+        scope.launch {
+            backgroundPreviewFrame = if (current.canvas.backgroundSource.usesWallpaperMedia) {
+                platform.loadBackgroundBitmap(current)
             } else {
-                backgroundPreviewFrame = null
+                null
             }
             val stickers = mutableMapOf<String, ImageBitmap>()
-            for (clip in project.timeline.stickerClips) {
-                platform.loadStickerBitmap(project, clip.relativePath)?.let { stickers[clip.relativePath] = it }
+            for (clip in current.timeline.stickerClips) {
+                platform.loadStickerBitmap(current, clip.relativePath)?.let { stickers[clip.relativePath] = it }
             }
             stickerFrames = stickers
-            isPreviewLoading = false
         }
     }
 

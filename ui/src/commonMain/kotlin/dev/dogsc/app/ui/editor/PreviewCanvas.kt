@@ -180,16 +180,9 @@ private fun ScreenLayer(
     val textMeasurer = rememberTextMeasurer()
     val shadow = screen.shadow
     if (shadow != null) {
-        // Same blurred quad as CanvasFrameRenderer.drawScreen, drawn beneath the warped card.
-        Canvas(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    val radius = max(shadow.radius.toFloat(), 2f) * (size.width / canvas.width.toFloat())
-                    renderEffect = BlurEffect(radius, radius, TileMode.Decal)
-                    alpha = screen.opacity.toFloat()
-                },
-        ) {
+        // A full-layer BlurEffect cost ~35 ms per frame on the emulator. Expanding strokes
+        // approximate the same soft shadow at a fraction of the GPU cost.
+        Canvas(Modifier.fillMaxSize()) {
             val sx = size.width / canvas.width.toFloat()
             val sy = size.height / canvas.height.toFloat()
             val quad = screen.projectedQuad
@@ -201,7 +194,17 @@ private fun ScreenLayer(
                 lineTo((quad.bottomLeft.x * sx).toFloat(), ((quad.bottomLeft.y + dy) * sy).toFloat())
                 close()
             }
-            drawPath(path, Color.Black.copy(alpha = (shadow.opacity * 90.0 / 255.0).toFloat().coerceIn(0f, 1f)))
+            val alpha = (shadow.opacity * 90.0 / 255.0).toFloat().coerceIn(0f, 1f) * screen.opacity.toFloat()
+            val radius = max(shadow.radius.toFloat(), 2f) * sx
+            for (i in 0 until 4) {
+                val grow = radius * (i + 1) / 4f
+                drawPath(
+                    path,
+                    Color.Black.copy(alpha = alpha / 7f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = grow * 2f),
+                )
+            }
+            drawPath(path, Color.Black.copy(alpha = alpha * 0.3f))
         }
     }
 

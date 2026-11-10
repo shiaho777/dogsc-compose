@@ -259,6 +259,13 @@ fun TimelinePanel(
                             .width(contentWidth)
                             .fillMaxHeight(),
                     )
+                    // Drawn separately so the 60 Hz playhead does not redraw filmstrip and clips.
+                    PlayheadOverlay(
+                        state = state,
+                        modifier = Modifier
+                            .width(contentWidth)
+                            .fillMaxHeight(),
+                    )
                 }
             }
         }
@@ -747,9 +754,15 @@ private fun TimelineCanvas(
             drawCircle(DogScColors.Recording, 3.2f, Offset(x, RulerHeight.toPx() * 0.25f))
         }
 
-        // Playhead.
-        val playheadX = (state.playhead * pps).toFloat()
-        drawLine(DogScColors.Playhead, Offset(playheadX, 0f), Offset(playheadX, height), 1.6f)
+    }
+}
+
+@Composable
+private fun PlayheadOverlay(state: DogScAppState, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val duration = max(state.outputDuration, 0.001)
+        val playheadX = (state.playhead / duration * size.width).toFloat()
+        drawLine(DogScColors.Playhead, Offset(playheadX, 0f), Offset(playheadX, size.height), 1.6f)
         val handle = Path().apply {
             moveTo(playheadX - 5f, 0f)
             lineTo(playheadX + 5f, 0f)

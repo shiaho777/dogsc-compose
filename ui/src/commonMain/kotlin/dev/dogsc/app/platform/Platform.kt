@@ -125,6 +125,7 @@ interface DogScPlatform {
     fun seekPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {}
     fun pausePreviewAudio() {}
     fun releasePreviewAudio() {}
+    fun releasePreviewFrames() {}
 }
 
 data class MediaProbe(

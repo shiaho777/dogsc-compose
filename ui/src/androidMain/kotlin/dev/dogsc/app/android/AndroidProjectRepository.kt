@@ -25,6 +25,8 @@ import dev.dogsc.core.model.ProjectMediaReference
 import dev.dogsc.core.model.RecorderProject
 import dev.dogsc.core.project.ProjectCodec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -176,51 +178,33 @@ class AndroidProjectRepository(private val context: Context) {
         }.getOrNull()
     }
 
-    suspend fun loadThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? = withContext(Dispatchers.IO) {
-        val dir = File(projectsDir, project.id)
-        val path = project.media?.screen?.relativePath ?: return@withContext null
-        val file = File(dir, path)
-        if (!file.exists()) return@withContext null
-        val key = "${file.absolutePath}@${(atTime * 4).toInt()}"
-        thumbnailCache.get(key)?.let { return@withContext it.asImageBitmap() }
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(file.absolutePath)
-            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            val timeUs = (atTime.coerceIn(0.0, durationMs / 1000.0) * 1_000_000).toLong()
-            val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                ?: return@withContext null
-            thumbnailCache.put(key, bitmap)
-            bitmap.asImageBitmap()
-        } catch (_: Exception) {
-            null
-        } finally {
-            runCatching { retriever.release() }
+    private val frameMutex = Mutex()
+    private val previewDecoder = PreviewFrameDecoder()
+
+    /** Preview frames come from a persistent MediaCodec decoder, not a retriever per request. */
+    private suspend fun decodePreviewFrame(file: File, atTime: Double, maxWidth: Int = 720): Bitmap? =
+        frameMutex.withLock {
+            withContext(Dispatchers.IO) {
+                runCatching { previewDecoder.frame(file, atTime, maxWidth) }.getOrNull()
+            }
         }
+
+    fun releasePreviewFrames() {
+        runCatching { previewDecoder.close() }
     }
 
-    suspend fun loadCameraThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? = withContext(Dispatchers.IO) {
-        val dir = File(projectsDir, project.id)
-        val path = project.media?.camera?.relativePath ?: return@withContext null
-        val file = File(dir, path)
-        if (!file.exists()) return@withContext null
-        val key = "${file.absolutePath}@${(atTime * 4).toInt()}"
-        thumbnailCache.get(key)?.let { return@withContext it.asImageBitmap() }
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(file.absolutePath)
-            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            val timeUs = (atTime.coerceIn(0.0, durationMs / 1000.0) * 1_000_000).toLong()
-            val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                ?: return@withContext null
-            thumbnailCache.put(key, bitmap)
-            bitmap.asImageBitmap()
-        } catch (_: Exception) {
-            null
-        } finally {
-            runCatching { retriever.release() }
-        }
+    suspend fun loadThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? {
+        val path = project.media?.screen?.relativePath ?: return null
+        val file = File(File(projectsDir, project.id), path)
+        if (!file.exists()) return null
+        return decodePreviewFrame(file, atTime)?.asImageBitmap()
+    }
+
+    suspend fun loadCameraThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? {
+        val path = project.media?.camera?.relativePath ?: return null
+        val file = File(File(projectsDir, project.id), path)
+        if (!file.exists()) return null
+        return decodePreviewFrame(file, atTime)?.asImageBitmap()
     }
 
     suspend fun loadStickerBitmap(project: RecorderProject, relativePath: String): ImageBitmap? = withContext(Dispatchers.IO) {
