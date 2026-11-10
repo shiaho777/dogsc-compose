@@ -32,10 +32,12 @@ import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import dev.dogsc.app.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -80,6 +82,7 @@ fun LibraryScreen(
     host: DogScHost,
     onStartRecording: () -> Unit,
 ) {
+    var deleteTarget by remember { mutableStateOf<ProjectSummary?>(null) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -179,12 +182,35 @@ fun LibraryScreen(
                         project = project,
                         host = host,
                         onOpen = { state.openProject(project) },
-                        onDelete = { state.deleteProject(project) },
+                        onDelete = { deleteTarget = project },
                         onDuplicate = { state.duplicateProject(project) },
                     )
                 }
             }
         }
+    }
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            containerColor = DogScColors.Panel,
+            title = { Text("删除这个项目？") },
+            text = { Text("项目和其中的录制素材会移到回收站，可在设置中恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteTarget = null
+                        state.deleteProject(target)
+                    },
+                ) {
+                    Text("删除", color = DogScColors.Danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 

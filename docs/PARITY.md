@@ -111,7 +111,7 @@ Last updated: 2026-11-10.
 
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
-| Project library | Grid, thumbnails, rename/duplicate/delete; duplicate/delete show a busy overlay; deleted projects can be restored from Settings → Trash | Done | Emulator: deleted the 17:18 project, Settings showed it under Trash with a Restore button, and restoring returned it to the library (12 → 13 projects). Duplicate/delete wrap their I/O in the shared busy state |
+| Project library | Grid, thumbnails, rename/duplicate/delete; duplicate/delete show a busy overlay; deleted projects can be restored from Settings → Trash | Done | Emulator: deleted the 17:18 project, Settings showed it under Trash with a Restore button, and restoring returned it to the library (12 → 13 projects). Library delete now asks for confirmation before moving to the trash, and duplicate/delete wrap their I/O in the shared busy state |
 | Edit persistence | Debounced autosave (1.2 s), save on leaving the editor, save on app background (`ON_STOP`) | Done | Emulator: edit → force-stop → reopen keeps the clip; edit → Home → kill after 0.8 s (before the debounce) also keeps it |
 | Editor reactivity | Every session commit/undo/redo bumps a Compose revision; validation errors become toasts | Done | Emulator: 添加屏幕 3D / 添加缩放 now update the clip count (previously stayed at 0) |
 | First-launch introduction | Three-page onboarding with capability and permission guidance | Done | `OnboardingScreen`; persisted first-launch flag; shown on a clean install |
