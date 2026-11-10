@@ -88,14 +88,17 @@ fun ScenePreview(
             )
         }.getOrNull()
     }
+    // The preview only has new pixels when a frame arrives (~30 fps); quantising the scene time
+    // avoids re-composing and re-recording the whole canvas on every 60 Hz playhead tick.
+    val sceneTime = (state.playhead * 30).toInt() / 30.0
     val scene = remember(
-        project, state.playhead, canvasAspect, state.sourceAspectRatio, state.cameraAspectRatio,
+        project, sceneTime, canvasAspect, state.sourceAspectRatio, state.cameraAspectRatio,
         state.previewFrame, state.cameraPreviewFrame,
     ) {
         runCatching {
             FrameSceneEvaluator.scene(
                 project = project,
-                time = state.playhead,
+                time = sceneTime,
                 outputDuration = state.outputDuration,
                 canvasSize = CompositionSize(1920.0, 1920.0 / canvasAspect),
                 sourceAspectRatio = state.sourceAspectRatio,
