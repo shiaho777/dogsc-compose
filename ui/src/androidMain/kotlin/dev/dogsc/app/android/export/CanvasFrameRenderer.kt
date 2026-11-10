@@ -448,11 +448,15 @@ class CanvasFrameRenderer(
         if (bitmap != null) {
             val fillLayout = scene.contentFill
             if (fillLayout != null) {
+                // CameraContentFill works in source-size units (the exporter passes the aspect
+                // ratio, not pixels). Scale the visible crop into the decoded bitmap.
+                val sourceScaleX = bitmap.width / fillLayout.source.width.coerceAtLeast(0.0001)
+                val sourceScaleY = bitmap.height / fillLayout.source.height.coerceAtLeast(0.0001)
                 val src = Rect(
-                    fillLayout.visibleSource.x.toInt(),
-                    fillLayout.visibleSource.y.toInt(),
-                    fillLayout.visibleSource.right.toInt(),
-                    fillLayout.visibleSource.bottom.toInt(),
+                    (fillLayout.visibleSource.x * sourceScaleX).toInt(),
+                    (fillLayout.visibleSource.y * sourceScaleY).toInt(),
+                    (fillLayout.visibleSource.right * sourceScaleX).toInt(),
+                    (fillLayout.visibleSource.bottom * sourceScaleY).toInt(),
                 )
                 val dst = RectF(
                     fillLayout.destination.x.toFloat(),

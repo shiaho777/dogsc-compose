@@ -464,6 +464,30 @@ internal class RecordingCoordinator(
         ),
     )
 
+    private data class VideoProbe(val duration: Double, val width: Int, val height: Int)
+
+    private fun probeVideo(file: File): VideoProbe {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            VideoProbe(
+                duration = (retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_DURATION,
+                )?.toLongOrNull() ?: 0L) / 1000.0,
+                width = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH,
+                )?.toIntOrNull() ?: 0,
+                height = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT,
+                )?.toIntOrNull() ?: 0,
+            )
+        } catch (_: Throwable) {
+            VideoProbe(0.0, 0, 0)
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
     private suspend fun finalizeProject() {
         try {
             val segments = buildSegments(rawDuration)
@@ -483,8 +507,14 @@ internal class RecordingCoordinator(
                     pixelWidth = width,
                     pixelHeight = height,
                 ),
-                camera = cameraFile.takeIf { it.exists() && it.length() > 0 }?.let {
-                    ProjectMediaReference(relativePath = "media/camera.mp4", durationSeconds = rawDuration)
+                camera = cameraFile.takeIf { it.exists() && it.length() > 0 }?.let { file ->
+                    val probe = probeVideo(file)
+                    ProjectMediaReference(
+                        relativePath = "media/camera.mp4",
+                        durationSeconds = if (probe.duration > 0.1) probe.duration else rawDuration,
+                        pixelWidth = probe.width.takeIf { it > 0 },
+                        pixelHeight = probe.height.takeIf { it > 0 },
+                    )
                 },
                 microphone = micFile.takeIf { it.exists() && it.length() > 0 }?.let {
                     ProjectMediaReference(relativePath = "media/microphone.m4a")

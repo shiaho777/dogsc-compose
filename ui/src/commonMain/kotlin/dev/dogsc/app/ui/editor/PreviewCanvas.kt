@@ -473,7 +473,43 @@ private fun CameraLayer(scene: FrameScene, frame: ImageBitmap?) {
                 )
             }
             clipPath(path) {
-                if (frame != null) {
+                val fill = camera.contentFill
+                if (frame != null && fill != null) {
+                    // Match the exporter: crop visibleSource (source units) and draw it at
+                    // destination (canvas units), so preview and export frame identically.
+                    val sourceScaleX = frame.width / fill.source.width.coerceAtLeast(0.0001)
+                    val sourceScaleY = frame.height / fill.source.height.coerceAtLeast(0.0001)
+                    val canvasScale = w / canvas.width.toFloat()
+                    val srcOffset = IntOffset(
+                        (fill.visibleSource.x * sourceScaleX).toInt().coerceIn(0, frame.width - 1),
+                        (fill.visibleSource.y * sourceScaleY).toInt().coerceIn(0, frame.height - 1),
+                    )
+                    val srcSize = IntSize(
+                        (fill.visibleSource.width * sourceScaleX).toInt().coerceAtLeast(1),
+                        (fill.visibleSource.height * sourceScaleY).toInt().coerceAtLeast(1),
+                    )
+                    val dstOffset = IntOffset(
+                        (fill.destination.x * canvasScale).toInt(),
+                        (fill.destination.y * canvasScale).toInt(),
+                    )
+                    val dstSize = IntSize(
+                        (fill.destination.width * canvasScale).toInt().coerceAtLeast(1),
+                        (fill.destination.height * canvasScale).toInt().coerceAtLeast(1),
+                    )
+                    withTransform({
+                        if (camera.isMirrored) {
+                            scale(-1f, 1f, pivot = Offset(rect.center.x, rect.center.y))
+                        }
+                    }) {
+                        drawImage(
+                            image = frame,
+                            srcOffset = srcOffset,
+                            srcSize = srcSize,
+                            dstOffset = dstOffset,
+                            dstSize = dstSize,
+                        )
+                    }
+                } else if (frame != null) {
                     withTransform({
                         if (camera.isMirrored) {
                             scale(-1f, 1f, pivot = Offset(rect.center.x, rect.center.y))

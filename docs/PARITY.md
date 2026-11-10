@@ -15,7 +15,7 @@ Last updated: 2026-11-04.
 | Record an iOS device | Import a recorded file | Done | Not applicable on Android; the import path covers the same workflow |
 | System audio | `AudioPlaybackCapture` (Android 10+) | Done | Recorded a 88.8 s AAC system track; source apps may opt out |
 | Microphone | `AudioRecord` + AAC encoder | Done | Separate `microphone.m4a`; mute writes aligned silence |
-| Camera PiP | CameraX `VideoCapture` in a background lifecycle | Partial | Implemented; not yet verified on physical hardware |
+| Camera PiP | CameraX `VideoCapture` in a background lifecycle; foreground service declares the camera type | Done | Emulator (virtual back camera): recorded a 3:27 session with a 1280×720 H.264 camera track; preview and exported frames both show the PiP, and the shared `CameraContentFill` crop matches. Front-lens requests fall back to the only available lens |
 | Touch/cursor track | Optional accessibility service; clicks/scroll anchors on every version, continuous motion on Android 14+ via `FLAG_SEND_MOTION_EVENTS` | Done | The documented platform equivalent: Android 14+ streams raw touch; older versions synthesise the cursor from click and scroll anchors |
 | Pause/resume | Pause intervals are cut out of the project timeline; recording continues | Done | `SourceSequence.Edited` from pause ranges |
 | Recording markers | Marker button/notification/overlay, persisted and shown on timeline | Done | `RecordingMarker` + marker sheet |
@@ -64,7 +64,7 @@ Last updated: 2026-11-04.
 | Spring/easing curves | Linear/quadratic/cubic/quintic/spring + custom cubic-bezier editor (four control-point sliders) | Done | Core evaluates `ZoomBezierCurve`; the selected zoom clip exposes P1/P2 X/Y sliders and stores `easing = custom` with the authored curve |
 | Focus effect | Radial/linear blur + dimming, animation/pointer/fixed targets | Done | Core + UI + renderer |
 | Screen 3D | Tilt X/Y, rotate Z, perspective, projection anchor | Done | Preview and export warp the card through the same `ProjectedScreenQuad.homography()`; `ScreenProjectionTest` 3/3; on emulator at 1.00 s, preview vs exported-frame corner detection differs ≤0.006 (normalized) |
-| Camera PiP motion | Shape, position, size, fullscreen transition, opacity | Partial | Core + UI; camera track unverified on physical device, emulator exposes one lens |
+| Camera PiP motion | Shape, position, size, fullscreen transition, opacity | Done | Added a fullscreen camera motion at the playhead: preview at 1.17 s fills the canvas, and the exported 810×1800 frame at 1.17 s matches |
 | Opening sequence | Converge/side-slide/light-3D, duration/stagger/order/curve | Done | Core + UI + renderer |
 | Cursor styles | System arrow, hand, crosshair, I-beam, open/closed hand, not-allowed, touch dot, hidden | Done | Vector renderer |
 | Click feedback | Ripple/glow/pulse/burst, color/opacity/scale | Done | |
@@ -119,7 +119,7 @@ Last updated: 2026-11-04.
 | Settings | Capabilities, permissions, storage, recording defaults, export completion sound, appearance (light/dark/system), language, about, licenses | Done | Defaults persist in `SharedPreferences`; dark mode verified by sampling the window background (10,11,13) after switching; language switch verified on the emulator |
 | Localization | Chinese and English, switchable in Settings; dynamic strings handled by pattern rules | Done | Emulator: switching to English re-rendered the settings page (`Settings`, `Appearance`, `Recording & permissions`); the choice persists |
 | Menu/shortcut reference | Bottom sheet listing the implemented bindings | Done | Every listed key is handled by the editor (`handleEditorKey`); verified Space, arrows, S, Ctrl+Z, Ctrl+Shift+Z on the emulator |
-| Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Unverified | Not visually verified on tablet |
+| Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Done | Emulator at 1600×2560 / density 240: the inspector rail sits at x 1138–1553 and the timeline keeps its controls |
 | iOS/desktop/web | Shared core/UI prepared; no targets yet | Gap | Android first; commonMain currently has no Android imports |
 
 ## Audit notes

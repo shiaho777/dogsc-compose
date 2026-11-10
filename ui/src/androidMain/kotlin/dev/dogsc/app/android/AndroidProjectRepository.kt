@@ -65,7 +65,14 @@ class AndroidProjectRepository(private val context: Context) {
         val summary = loadSummary(dir) ?: return@withContext null
         val duration = probe(File(dir, project.media?.screen?.relativePath ?: ""))?.durationSeconds ?: 0.0
         val pointerEvents = readPointerEvents(project, dir)
-        LoadedProject(project, duration, summary, pointerEvents)
+        val camera = project.media?.camera?.let { probe(File(dir, it.relativePath)) }
+        LoadedProject(
+            project = project,
+            sourceDuration = duration,
+            summary = summary,
+            pointerEvents = pointerEvents,
+            cameraAspectRatio = camera?.let { if (it.height > 0) it.width.toDouble() / it.height else null },
+        )
     }
 
     suspend fun saveProject(project: RecorderProject): Boolean = withContext(Dispatchers.IO) {

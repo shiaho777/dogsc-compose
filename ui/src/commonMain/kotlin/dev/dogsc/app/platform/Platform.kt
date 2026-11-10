@@ -22,6 +22,8 @@ data class LoadedProject(
     val sourceDuration: Double,
     val summary: ProjectSummary,
     val pointerEvents: List<dev.dogsc.core.model.PointerEventRecord> = emptyList(),
+    /** Camera aspect from the actual file; older projects predate stored pixel dimensions. */
+    val cameraAspectRatio: Double? = null,
 )
 
 data class ImportedMedia(

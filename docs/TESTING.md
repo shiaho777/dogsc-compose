@@ -65,10 +65,10 @@ Screenshots are judged by UI dumps (`uiautomator dump`) and PIL pixel sampling, 
 
 ## Known verification gaps
 
-- Camera recording has not been exercised on a physical device; the emulator exposes only one lens, so the front-camera fallback was exercised instead of a real front-camera session.
-- Touch capture depends on an accessibility service; click/scroll capture is implemented, continuous motion is not.
-- 4K export and hour-long recordings have not been profiled.
-- Multi-window/tablet layout has not been visually verified on a tablet.
+- Camera recording is verified on the emulator's virtual back camera (front requests fall back to the only lens); a physical-device front-camera session is still the remaining hardware check.
+- Touch capture depends on an accessibility service; clicks and scroll anchors are verified, continuous motion uses `FLAG_SEND_MOTION_EVENTS` on Android 14+.
+- 4K requests fall back to the encoder's largest supported size; hour-long recordings have not been profiled (57.5 s was measured at ~1× realtime).
+- Multi-window/tablet layout is verified at 1600×2560 / density 240 on the emulator.
 - The PCM mixer path (multiple sources or non-default volume) needs a dedicated timing test.
 - No automated UI/instrumentation tests yet; the current evidence is build + core tests + manual emulator runs + extracted export frames.
 
@@ -79,3 +79,5 @@ Screenshots are judged by UI dumps (`uiautomator dump`) and PIL pixel sampling, 
 - `adb shell dumpsys audio` while playing shows the preview `AudioTrack` state; Space pauses it.
 - **4K fallback**: request 4K on a device whose AVC encoder lacks 3840×2160; the export sheet must show the effective size and the encoder-limit note, and the file must match it (emulator: 3840×2160 → 1620×910).
 - **Long recording**: export a ~1 minute timeline and compare wall time with duration; log timestamps `video start` / `video encoded` / `DogSCAudio: encode done`.
+- **Camera PiP**: enable Camera overlay, grant the camera permission, record 10 s, stop. `media/camera.mp4` must exist (H.264, non-black); the editor must draw the PiP with the same crop as the export. Add a fullscreen camera motion at the playhead and export a short range; the exported frame must match the preview.
+- **Dynamic background export**: set a dynamic background, export a range that includes two visible background moments, extract both frames and compare the border regions.

@@ -171,7 +171,8 @@ class DogScAppState(
             val camera = project?.media?.camera ?: return null
             val w = camera.pixelWidth
             val h = camera.pixelHeight
-            return if (w != null && h != null && w > 0 && h > 0) w.toDouble() / h else null
+            if (w != null && h != null && w > 0 && h > 0) return w.toDouble() / h
+            return loadedProject?.cameraAspectRatio
         }
     val canvasAspectRatio: Double
         get() {

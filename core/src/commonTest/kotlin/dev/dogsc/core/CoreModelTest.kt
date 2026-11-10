@@ -359,3 +359,23 @@ class AutomaticCursorTest {
         assertEquals(dev.dogsc.core.model.CursorAssetID.SystemArrow, assetAt(2.0))
     }
 }
+
+class CameraContentFillTest {
+    @Test
+    fun squareOverlayCenterCropsLandscapeCamera() {
+        val layout = dev.dogsc.core.scene.CameraContentFill.layout(
+            sourceWidth = 16.0 / 9.0,
+            sourceHeight = 1.0,
+            target = dev.dogsc.core.model.CompositionRect(0.0, 0.0, 100.0, 100.0),
+        ) ?: error("layout")
+        // The visible crop is square in source units and centred horizontally.
+        assertEquals(layout.visibleSource.width, layout.visibleSource.height, 0.0001)
+        assertEquals(
+            (16.0 / 9.0 - layout.visibleSource.width) / 2,
+            layout.visibleSource.x,
+            0.0001,
+        )
+        // Drawing the crop at destination covers the target exactly.
+        assertEquals(100.0, layout.destination.width + layout.destination.x * 2, 0.01)
+    }
+}
