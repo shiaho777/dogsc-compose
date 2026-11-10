@@ -11,6 +11,7 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.util.Log
 import dev.dogsc.app.android.AndroidProjectRepository
 import dev.dogsc.app.platform.ExportProgress
@@ -153,7 +154,7 @@ class AndroidExporter(
                         trimStart,
                         trimEnd,
                     )
-                    if (cancelled) return@withContext ExportResult.Cancelled
+                    if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
                     if (!audioReady) return@withContext ExportResult.Failure("当前剪辑没有可导出的声音")
                     copyToDestination(tempAudio, request.outputUri)
                     onProgress(ExportProgress(1f, "导出完成"))
@@ -182,7 +183,7 @@ class AndroidExporter(
 
                 try {
                     for (index in 0 until frameCount) {
-                        if (cancelled) return@withContext ExportResult.Cancelled
+                        if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
                         val time = trimStart + min(index.toDouble() / frameRate, exportDuration)
                         val sourceTime = timelineMap.sourceTimeAtOutput(time)
                             ?: timelineMap.sourceTimeAtOutput(min(time, outputDuration - 0.0001))
@@ -259,7 +260,7 @@ class AndroidExporter(
                     renderer.release()
                     encoder.release()
                 }
-                if (cancelled) return@withContext ExportResult.Cancelled
+                if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
 
                 Log.d("DogSCExport", "video encoded, audio start")
                 onProgress(ExportProgress(0.88f, "正在处理音频"))
@@ -272,7 +273,7 @@ class AndroidExporter(
                     trimStart,
                     trimEnd,
                 )
-                if (cancelled) return@withContext ExportResult.Cancelled
+                if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
 
                 onProgress(ExportProgress(0.94f, "正在完成文件"))
                 if (audioReady) {
@@ -280,7 +281,7 @@ class AndroidExporter(
                 } else {
                     tempVideo.copyTo(finalFile, overwrite = true)
                 }
-                if (cancelled) return@withContext ExportResult.Cancelled
+                if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
                 copyToDestination(finalFile, request.outputUri)
                 val size = finalFile.length()
                 tempVideo.delete()
@@ -291,8 +292,12 @@ class AndroidExporter(
                 ExportResult.Success(request.outputUri, size, outputWidth, outputHeight)
             } catch (error: Throwable) {
                 Log.e("DogSCExport", "export failed", error)
-                if (cancelled) ExportResult.Cancelled
-                else ExportResult.Failure(error.message ?: "导出失败")
+                if (cancelled) {
+                    discardCancelledOutput(context, request)
+                    ExportResult.Cancelled
+                } else {
+                    ExportResult.Failure(error.message ?: "导出失败")
+                }
             }
         }
 
@@ -360,6 +365,18 @@ class AndroidExporter(
         }
     }
 }
+
+    /** A cancelled SAF export leaves an empty placeholder; remove it instead of the result. */
+    private fun discardCancelledOutput(context: Context, request: ExportRequest) {
+        runCatching {
+            val uri = Uri.parse(request.outputUri)
+            if (uri.scheme == "content") {
+                DocumentsContract.deleteDocument(context.contentResolver, uri)
+            } else {
+                File(uri.path ?: request.outputUri).delete()
+            }
+        }
+    }
 
     /** Not every Android encoder supports 4K; fall back to the largest size it reports. */
     private fun resolveEncoderSize(width: Int, height: Int): Pair<Int, Int> =

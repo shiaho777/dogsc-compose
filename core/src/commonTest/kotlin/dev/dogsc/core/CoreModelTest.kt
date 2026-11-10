@@ -379,3 +379,67 @@ class CameraContentFillTest {
         assertEquals(100.0, layout.destination.width + layout.destination.x * 2, 0.01)
     }
 }
+
+class CursorEvaluationTest {
+    private fun track(events: List<dev.dogsc.core.model.PointerEventRecord>) =
+        dev.dogsc.core.model.ProjectPointerTrack(
+            dev.dogsc.core.model.TimelineMap(dev.dogsc.core.model.SourceSequence.FullRecording, 10.0),
+            events,
+        )
+
+    @Test
+    fun idleHidingUsesTheLastActivityTime() {
+        val events = listOf(
+            dev.dogsc.core.model.PointerEventRecord(
+                time = 0.0,
+                location = NormalizedPoint(0.5, 0.5),
+                kind = dev.dogsc.core.model.PointerEventKind.MOVE,
+            ),
+        )
+        val style = dev.dogsc.core.model.CursorStyle(hideWhenIdle = true, idleDelay = 0.5)
+        assertTrue(track(events).evaluation(0.4, style = style).cursor != null)
+        assertTrue(track(events).evaluation(1.0, style = style).cursor == null)
+    }
+
+    @Test
+    fun clickFeedbackOnlyLivesForItsEffectDuration() {
+        val events = listOf(
+            dev.dogsc.core.model.PointerEventRecord(
+                time = 0.0,
+                location = NormalizedPoint(0.5, 0.5),
+                kind = dev.dogsc.core.model.PointerEventKind.MOVE,
+            ),
+            dev.dogsc.core.model.PointerEventRecord(
+                time = 0.5,
+                location = NormalizedPoint(0.5, 0.5),
+                kind = dev.dogsc.core.model.PointerEventKind.LEFT_CLICK,
+            ),
+        )
+        val style = dev.dogsc.core.model.CursorStyle(
+            clickEffectStyle = dev.dogsc.core.model.CursorClickEffectStyle.RIPPLE,
+        )
+        val active = track(events).evaluation(0.6, style = style).cursor
+        assertTrue(active?.isClicking == true)
+        assertTrue((active?.clickPhase?.progress ?: -1.0) in 0.0..1.0)
+        assertTrue(track(events).evaluation(2.0, style = style).cursor?.isClicking == false)
+    }
+
+    @Test
+    fun cursorTiltsWithHorizontalVelocity() {
+        val events = listOf(
+            dev.dogsc.core.model.PointerEventRecord(
+                time = 0.0,
+                location = NormalizedPoint(0.2, 0.5),
+                kind = dev.dogsc.core.model.PointerEventKind.MOVE,
+            ),
+            dev.dogsc.core.model.PointerEventRecord(
+                time = 0.2,
+                location = NormalizedPoint(0.8, 0.5),
+                kind = dev.dogsc.core.model.PointerEventKind.MOVE,
+            ),
+        )
+        val style = dev.dogsc.core.model.CursorStyle(motionTiltStrength = 3.0)
+        val rotation = track(events).evaluation(0.2, style = style).cursor?.rotationRadians ?: 0.0
+        assertTrue(kotlin.math.abs(rotation) > 0.001)
+    }
+}
