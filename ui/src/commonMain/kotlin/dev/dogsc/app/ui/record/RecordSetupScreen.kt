@@ -228,6 +228,9 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                     enabled = platform.supportsTouchCapture,
                     onCheckedChange = { enabled ->
                         if (enabled && !accessibilityEnabled) {
+                            // Remember the intent so the toggle is already on when the user
+                            // returns from granting the accessibility service.
+                            applyOptions(options.copy(touchCapture = true))
                             host.openAccessibilitySettings()
                         } else {
                             applyOptions(options.copy(touchCapture = enabled))

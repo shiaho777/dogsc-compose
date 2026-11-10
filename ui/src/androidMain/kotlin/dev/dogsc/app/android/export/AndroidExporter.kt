@@ -101,7 +101,7 @@ class AndroidExporter(
                     else -> null
                 }
                 val backgroundBitmap = backgroundFile?.takeIf { it.exists() && !backgroundSource.isVideo }?.let {
-                    BitmapFactory.decodeFile(it.absolutePath)
+                    dev.dogsc.app.android.decodeBitmapCapped(it, 3_072)
                 }
                 val backgroundVideo = backgroundFile?.takeIf { it.exists() && backgroundSource.isVideo }?.let {
                     runCatching { VideoFrameSource(it) }.getOrNull()
@@ -111,7 +111,7 @@ class AndroidExporter(
                 for (clip in project.timeline.stickerClips) {
                     val file = File(dir, clip.relativePath)
                     if (file.exists()) {
-                        BitmapFactory.decodeFile(file.absolutePath)?.let { stickerBitmaps[clip.relativePath] = it }
+                        dev.dogsc.app.android.decodeBitmapCapped(file, 2_048)?.let { stickerBitmaps[clip.relativePath] = it }
                     }
                 }
 

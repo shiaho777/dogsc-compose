@@ -250,7 +250,7 @@ class AndroidProjectRepository(private val context: Context) {
         val key = "sticker:${file.absolutePath}"
         thumbnailCache.get(key)?.let { return@withContext it.asImageBitmap() }
         runCatching {
-            val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+            val bitmap = decodeBitmapCapped(file, 2_048) ?: return@runCatching null
             thumbnailCache.put(key, bitmap)
             bitmap.asImageBitmap()
         }.getOrNull()
@@ -277,7 +277,7 @@ class AndroidProjectRepository(private val context: Context) {
             }
         } else {
             runCatching {
-                android.graphics.BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+                decodeBitmapCapped(file, 3_072)?.asImageBitmap()
             }.getOrNull()
         }
     }

@@ -85,10 +85,10 @@ Last updated: 2026-11-10.
 | Corner/border/shadow/inset opacity | Sliders + color palette | Done | Audit found the color palette passed ARGB (`0xFF…`) to the 24-bit `HexColor`, so opening the 画面 inspector crashed every time; fixed and re-verified on the emulator |
 | Background patterns | Five presets | Done | Canvas renderer |
 | Dynamic backgrounds | Three presets with time-driven drift/dot motion | Done | Preview and export share `drawDynamic` + `scene.time`. Emulator: exported 10.8 s of the cyber-drift preset; the border background is the expected brown at 0.2 s and 9.8 s, and thousands of border pixels differ between the two frames. Fixed a stale paint alpha that made exported backgrounds black after the first frame |
-| Custom image/video background | SAF import + cover draw; preview and export both center-crop, blur with a ×18 downscale and the same dimming factor | Done | Preview now uses the export's cover math, blur and dimming; video backgrounds decode per frame |
+| Custom image/video background | SAF import + cover draw; preview and export both center-crop, blur with a ×18 downscale and the same dimming factor; still images are capped at 3072 px for memory safety | Done | Preview now uses the export's cover math, blur and dimming; video backgrounds decode per frame |
 | Window/browser frames | Chrome + title/address + scale/radius | Done | Emulator: `browserLight` preview and exported frame both show traffic lights, title/address bar and rounded chrome |
 | Phone/tablet frames | Adaptive device bezel | Done | Emulator: `devicePhone` preview draws the bezel, speaker slot and rounded content; the chrome scene is shared with export |
-| Stickers | Import, layer order, transform, animation, hide screen/camera | Done | Core fade test; import/transform/animation UI; preview/export share `FrameScene` |
+| Stickers | Import, layer order, transform, animation, hide screen/camera | Done | Core fade test; import/transform/animation UI; preview/export share `FrameScene`; large images are capped at 2048 px |
 | Mosaic/spotlight | Rounded region, blur/dim, transitions | Done | Preview now blurs the actual screen frame inside the same rounded rect with the same alpha (export downsamples ×12, preview uses an equivalent Gaussian); spotlight dimming was already identical. Emulator: the region that changes when toggling the mosaic matches the clip rect exactly (412–667 × 847–953), and detail inside drops from 573 to 157 while the control region is unchanged |
 | Scene presets | Save/apply/delete appearance snapshots | Done | `scene-presets.json`; save/apply/delete paths in the inspector |
 | Wallpaper library | System photo picker + five built-in patterns + three dynamic backgrounds | Done | Upstream bundles macOS wallpapers; Android exposes the user's own media and keeps ready-made backgrounds in the canvas presets. See DECISIONS §3 |
@@ -99,6 +99,7 @@ Last updated: 2026-11-10.
 |---|---|---|---|
 | MP4 H.264 + AAC | Canvas renderer + MediaCodec + MediaMuxer | Done | 1920×1080/30, 12.03 s, AAC; frame extracted and compared |
 | M4A audio-only | Audio track copy fast path | Done | 190 KB M4A for a 12 s clip |
+| Audio-only header | Export sheet shows duration · M4A and hides the video encoder-limit note | Done 
 | 30/60 FPS | Encoder settings | Done | 30 fps export `r_frame_rate=30/1`; 60 fps long/camera exports `r_frame_rate=60/1` |
 | Source/1080p/1440p/4K | Canvas dimensions + encoder, clamped to the encoder's reported maximum | Done | Emulator: a 4K request was clamped to 1620×910 (software AVC encoder), exported 10.28 s H.264/AAC in ~6 s; the export sheet shows the effective size and an encoder-limit note |
 | Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur; preview audio applies each slice's speed on item transitions | Done | 2D, 3D, stickers, mosaic and custom backgrounds match; cuts and per-clip volume were already honoured |

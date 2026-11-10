@@ -124,11 +124,15 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
             Text("导出作品", color = DogScColors.PrimaryText, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
             Text(
-                "${formatTimecode(exportDuration)} · ${effectiveSize.first}×${effectiveSize.second}",
+                if (audioOnly) {
+                    "${formatTimecode(exportDuration)} · M4A"
+                } else {
+                    "${formatTimecode(exportDuration)} · ${effectiveSize.first}×${effectiveSize.second}"
+                },
                 color = DogScColors.TertiaryText,
                 style = MaterialTheme.typography.bodySmall,
             )
-            if (clamped) {
+            if (clamped && !audioOnly) {
                 Text(
                     "编码器上限：${estimate.width}×${estimate.height} → ${effectiveSize.first}×${effectiveSize.second}",
                     color = DogScColors.Amber,
