@@ -330,3 +330,32 @@ class PrimaryReorderTest {
         assertEquals(10.0, map.outputDuration, 0.0001)
     }
 }
+
+class AutomaticCursorTest {
+    @Test
+    fun automaticCursorShowsTouchDotForTapsAndArrowWhileMoving() {
+        val project = RecorderProject(
+            cursorStyle = dev.dogsc.core.model.CursorStyle(assetID = dev.dogsc.core.model.CursorAssetID.Automatic),
+        )
+        val events = listOf(
+            dev.dogsc.core.model.PointerEventRecord(
+                time = 0.5,
+                location = NormalizedPoint(0.5, 0.5),
+                kind = dev.dogsc.core.model.PointerEventKind.LEFT_CLICK,
+            ),
+        )
+        val track = dev.dogsc.core.model.ProjectPointerTrack(
+            dev.dogsc.core.model.TimelineMap(dev.dogsc.core.model.SourceSequence.FullRecording, 10.0),
+            events,
+        )
+        fun assetAt(time: Double) = dev.dogsc.core.scene.FrameSceneEvaluator.scene(
+            project = project,
+            time = time,
+            canvasSize = CompositionSize(1920.0, 1080.0),
+            sourceAspectRatio = 16.0 / 9.0,
+            pointerTrack = track,
+        ).cursor?.assetID
+        assertEquals(dev.dogsc.core.model.CursorAssetID.TouchDot, assetAt(0.52))
+        assertEquals(dev.dogsc.core.model.CursorAssetID.SystemArrow, assetAt(2.0))
+    }
+}

@@ -792,7 +792,13 @@ object FrameSceneEvaluator {
     ): FrameCursorScene? {
         val pointer = sample ?: return null
         val assetID = if (project.cursorStyle.assetID == CursorAssetID.Automatic) {
-            pointer.recordedCursorAssetID ?: CursorAssetID.SystemArrow
+            // Android cannot read the source app's cursor. The platform equivalent: show the
+            // touch dot while a tap effect is active, and the arrow while moving.
+            pointer.recordedCursorAssetID ?: if (pointer.isClicking) {
+                CursorAssetID.TouchDot
+            } else {
+                CursorAssetID.SystemArrow
+            }
         } else {
             project.cursorStyle.assetID
         }

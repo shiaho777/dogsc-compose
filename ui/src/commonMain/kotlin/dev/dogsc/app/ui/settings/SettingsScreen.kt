@@ -28,7 +28,7 @@ import androidx.compose.material.icons.outlined.ScreenShare
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import dev.dogsc.app.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -95,6 +95,42 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        SectionTitle("语言")
+        SoftCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                SegmentedControl(
+                    options = listOf("中文", "English"),
+                    selectedIndex = if (state.english) 1 else 0,
+                    onSelect = { index -> state.updateEnglish(index == 1) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        SectionTitle("外观")
+        SoftCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                SegmentedControl(
+                    options = listOf("浅色", "深色", "跟随系统"),
+                    selectedIndex = when (state.appearance) {
+                        dev.dogsc.app.platform.AppAppearance.LIGHT -> 0
+                        dev.dogsc.app.platform.AppAppearance.DARK -> 1
+                        dev.dogsc.app.platform.AppAppearance.SYSTEM -> 2
+                    },
+                    onSelect = { index ->
+                        state.updateAppearance(
+                            when (index) {
+                                0 -> dev.dogsc.app.platform.AppAppearance.LIGHT
+                                1 -> dev.dogsc.app.platform.AppAppearance.DARK
+                                else -> dev.dogsc.app.platform.AppAppearance.SYSTEM
+                            },
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         Spacer(Modifier.height(16.dp))

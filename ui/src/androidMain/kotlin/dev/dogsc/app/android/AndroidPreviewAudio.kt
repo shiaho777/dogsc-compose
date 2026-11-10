@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import dev.dogsc.core.model.MediaTimelinePlacement
 import dev.dogsc.core.model.ProjectMediaReference
@@ -15,8 +16,7 @@ import java.io.File
 
 /**
  * Timeline audio for the editor preview. Cuts are honoured by one clipped ExoPlayer item per
- * timeline slice; a uniform per-segment speed becomes the player's playback rate. Mixed speeds
- * fall back to 1× (documented in PARITY) because ExoPlayer's rate is player-wide.
+ * timeline slice, and each slice's speed is applied when the player transitions to its item.
  */
 class AndroidPreviewAudio(
     private val context: Context,
@@ -24,21 +24,30 @@ class AndroidPreviewAudio(
 ) {
     private var player: ExoPlayer? = null
     private var slices: List<TimelineMediaSlice> = emptyList()
+    private var rates: List<Float> = emptyList()
 
     fun start(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
         val prepared = prepare(project, sourceDuration) ?: return
         val (items, planSlices) = prepared
-        val exo = player ?: ExoPlayer.Builder(context).build().also { player = it }
+        val exo = player ?: ExoPlayer.Builder(context).build().also { created ->
+            player = created
+            created.addListener(object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    val index = created.currentMediaItemIndex
+                    rates.getOrNull(index)?.let { created.playbackParameters = PlaybackParameters(it) }
+                }
+            })
+        }
         slices = planSlices
+        rates = planSlices.map { it.sourceTimeScale.toFloat().coerceIn(0.25f, 8f) }
         if (exo.mediaItemCount != items.size || exo.currentMediaItemIndex >= items.size) {
             exo.setMediaItems(items)
             // setMediaItems leaves the player idle; without prepare() playWhenReady does nothing.
             exo.prepare()
         }
         exo.volume = volumeOf(project)
-        val rate = uniformRate(planSlices)
-        exo.playbackParameters = PlaybackParameters(rate)
         val index = planSlices.indexOfLast { it.outputStart <= outputTime }.coerceAtLeast(0)
+        exo.playbackParameters = PlaybackParameters(rates.getOrElse(index) { 1f })
         val offset = ((outputTime - planSlices[index].outputStart) * 1000).toLong().coerceAtLeast(0)
         exo.seekTo(index, offset)
         exo.playWhenReady = true
@@ -65,13 +74,6 @@ class AndroidPreviewAudio(
         val mic = if (project.audio.isMicrophoneMuted) 0.0 else project.audio.microphoneVolume
         // One preview stream cannot mix; prefer the louder audible source.
         return maxOf(system, mic).toFloat().coerceIn(0f, 1f)
-    }
-
-    private fun uniformRate(slices: List<TimelineMediaSlice>): Float {
-        val first = slices.firstOrNull()?.sourceTimeScale ?: 1.0
-        return if (slices.all { kotlin.math.abs(it.sourceTimeScale - first) < 0.001 }) {
-            first.toFloat().coerceIn(0.25f, 4f)
-        } else 1f
     }
 
     private fun prepare(

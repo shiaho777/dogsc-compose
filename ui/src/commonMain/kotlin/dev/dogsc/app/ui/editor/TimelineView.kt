@@ -38,7 +38,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import dev.dogsc.app.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -675,7 +675,7 @@ private fun TimelineCanvas(
                     bottom = zoomBottom,
                     color = DogScColors.ZoomClip,
                     ink = DogScColors.ZoomInk,
-                    label = "缩放 ${formatScale(clip.scale)} · ${if (clip.origin == dev.dogsc.core.model.ZoomKeyframeOrigin.AUTOMATIC) "自动" else "手动"}",
+                    label = dev.dogsc.app.ui.Loc.t("缩放 ${formatScale(clip.scale)} · ${if (clip.origin == dev.dogsc.core.model.ZoomKeyframeOrigin.AUTOMATIC) "自动" else "手动"}"),
                     selected = selected,
                 )
             }
@@ -691,7 +691,7 @@ private fun TimelineCanvas(
                     bottom = screenBottom,
                     color = DogScColors.ScreenClip,
                     ink = DogScColors.SecondaryText,
-                    label = "屏幕 3D",
+                    label = dev.dogsc.app.ui.Loc.t("屏幕 3D"),
                     selected = selected,
                 )
             }
@@ -707,7 +707,7 @@ private fun TimelineCanvas(
                     bottom = cameraBottom,
                     color = DogScColors.CameraClip,
                     ink = DogScColors.CameraInk,
-                    label = "摄像运动",
+                    label = dev.dogsc.app.ui.Loc.t("摄像运动"),
                     selected = selected,
                 )
             }
@@ -723,7 +723,7 @@ private fun TimelineCanvas(
                     bottom = mosaicBottom,
                     color = DogScColors.MosaicClip,
                     ink = DogScColors.MosaicInk,
-                    label = if (clip.style == MosaicEffectStyle.SPOTLIGHT) "突出" else "打码",
+                    label = dev.dogsc.app.ui.Loc.t(if (clip.style == MosaicEffectStyle.SPOTLIGHT) "突出" else "打码"),
                     selected = selected,
                 )
             }
@@ -739,7 +739,7 @@ private fun TimelineCanvas(
                     bottom = stickerBottom,
                     color = DogScColors.StickerClip,
                     ink = DogScColors.StickerInk,
-                    label = "贴图",
+                    label = dev.dogsc.app.ui.Loc.t("贴图"),
                     selected = selected,
                 )
             }

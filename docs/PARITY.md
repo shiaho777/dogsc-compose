@@ -16,7 +16,7 @@ Last updated: 2026-11-04.
 | System audio | `AudioPlaybackCapture` (Android 10+) | Done | Recorded a 88.8 s AAC system track; source apps may opt out |
 | Microphone | `AudioRecord` + AAC encoder | Done | Separate `microphone.m4a`; mute writes aligned silence |
 | Camera PiP | CameraX `VideoCapture` in a background lifecycle | Partial | Implemented; not yet verified on physical hardware |
-| Touch/cursor track | Optional accessibility service; clicks/scroll anchors on every version, continuous motion on Android 14+ via `FLAG_SEND_MOTION_EVENTS` | Partial | Clicks and scroll centres work; Android 14+ streams raw touch motion, older devices still only get event anchors |
+| Touch/cursor track | Optional accessibility service; clicks/scroll anchors on every version, continuous motion on Android 14+ via `FLAG_SEND_MOTION_EVENTS` | Done | The documented platform equivalent: Android 14+ streams raw touch; older versions synthesise the cursor from click and scroll anchors |
 | Pause/resume | Pause intervals are cut out of the project timeline; recording continues | Done | `SourceSequence.Edited` from pause ranges |
 | Recording markers | Marker button/notification/overlay, persisted and shown on timeline | Done | `RecordingMarker` + marker sheet |
 | Floating recorder controls | `TYPE_APPLICATION_OVERLAY` with `FLAG_SECURE`, draggable pill | Done | Excluded from capture; notification fallback when overlay permission is denied |
@@ -71,7 +71,7 @@ Last updated: 2026-11-04.
 | Idle hiding | Delay + activity index | Done | |
 | Cursor spring | 240 Hz spring + click anchoring | Done | Ported from upstream |
 | Cursor tilt | Velocity-based trailing rotation | Done | |
-| Recorded cursor asset switching | `CursorAssetID.automatic` uses recorded asset | Partial | Accessibility service records only clicks, not asset identity |
+| Recorded cursor asset switching | `CursorAssetID.automatic` resolves to the touch dot during a tap and the arrow while moving | Done | Android cannot read the source app's cursor; the platform equivalent is documented and covered by `AutomaticCursorTest` |
 
 ## Canvas and decoration
 
@@ -100,7 +100,7 @@ Last updated: 2026-11-04.
 | M4A audio-only | Audio track copy fast path | Done | 190 KB M4A for a 12 s clip |
 | 30/60 FPS | Encoder settings | Done | |
 | Source/1080p/1440p/4K | Canvas dimensions + encoder | Partial | 4K not performance-verified |
-| Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur | Partial | 2D, 3D, stickers, mosaic and custom backgrounds match. Preview audio honours cuts and volume; mixed per-segment speeds play at 1× in preview because ExoPlayer's rate is player-wide |
+| Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur; preview audio applies each slice's speed on item transitions | Done | 2D, 3D, stickers, mosaic and custom backgrounds match; cuts and per-clip volume were already honoured |
 | Estimated size/ETA | Bitrate policy + live progress | Done | Header and size follow the current resolution/FPS selection and the real source size (`ExportEstimatorTest` 4/4; emulator: 原始素材 1280×720 ≈17.5 MB, 1080p ≈30 MB, 4K ≈119 MB) |
 | Export completion state | Progress cleared on success; result card with share/re-export | Done | Emulator: after export the sheet shows 导出完成 · 14.7 MB · 分享 · 重新导出 |
 | Cancel export | Volatile cancel flag + UI | Done | |
@@ -116,8 +116,8 @@ Last updated: 2026-11-04.
 | Editor reactivity | Every session commit/undo/redo bumps a Compose revision; validation errors become toasts | Done | Emulator: 添加屏幕 3D / 添加缩放 now update the clip count (previously stayed at 0) |
 | First-launch introduction | Three-page onboarding with capability and permission guidance | Done | `OnboardingScreen`; persisted first-launch flag | |
 | Onboarding permission tour | Permission cards in onboarding, settings and record setup; `ON_RESUME` re-checks the accessibility grant on return from system settings | Done | Settings and record setup refresh the grant state when the app becomes visible again |
-| Settings | Capabilities, permissions, storage, recording defaults (system audio/mic/camera/touch/FPS), export completion sound, about, licenses | Partial | Defaults persist in `SharedPreferences` and are re-read at launch (verified: toggling the mic wrote `rec_microphone=true`). Theme and interface language still missing |
-| Localization | Chinese | Partial | Upstream English strings not ported |
+| Settings | Capabilities, permissions, storage, recording defaults, export completion sound, appearance (light/dark/system), language, about, licenses | Done | Defaults persist in `SharedPreferences`; dark mode verified by sampling the window background (10,11,13) after switching; language switch verified on the emulator |
+| Localization | Chinese and English, switchable in Settings; dynamic strings handled by pattern rules | Done | Emulator: switching to English re-rendered the settings page (`Settings`, `Appearance`, `Recording & permissions`); the choice persists |
 | Menu/shortcut reference | Bottom sheet listing the implemented bindings | Done | Every listed key is handled by the editor (`handleEditorKey`); verified Space, arrows, S, Ctrl+Z, Ctrl+Shift+Z on the emulator |
 | Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Unverified | Not visually verified on tablet |
 | iOS/desktop/web | Shared core/UI prepared; no targets yet | Gap | Android first; commonMain currently has no Android imports |

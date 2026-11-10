@@ -67,11 +67,15 @@ data class RecordingResult(
     val sourceDuration: Double,
 )
 
+enum class AppAppearance { LIGHT, DARK, SYSTEM }
+
 /** App-wide preferences that outlive a project. */
 data class AppPreferences(
     val recording: RecordingOptions = RecordingOptions(),
     val exportSoundEnabled: Boolean = true,
     val memoText: String = "",
+    val appearance: AppAppearance = AppAppearance.SYSTEM,
+    val english: Boolean = false,
 )
 
 /**

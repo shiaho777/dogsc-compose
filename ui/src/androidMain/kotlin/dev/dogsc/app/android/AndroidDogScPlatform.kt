@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import dev.dogsc.app.android.export.AndroidExporter
+import dev.dogsc.app.platform.AppAppearance
 import dev.dogsc.app.platform.AppPreferences
 import dev.dogsc.app.platform.DogScPlatform
 import dev.dogsc.app.platform.ExportProgress
@@ -163,6 +164,10 @@ class AndroidDogScPlatform(
             ),
             exportSoundEnabled = prefs.getBoolean("export_sound", true),
             memoText = prefs.getString("rec_memo", "") ?: "",
+            appearance = runCatching {
+                AppAppearance.valueOf(prefs.getString("appearance", "SYSTEM") ?: "SYSTEM")
+            }.getOrDefault(AppAppearance.SYSTEM),
+            english = prefs.getBoolean("english", false),
         )
     }
 
@@ -204,6 +209,8 @@ class AndroidDogScPlatform(
             .putInt("rec_fps", preferences.recording.frameRate)
             .putBoolean("export_sound", preferences.exportSoundEnabled)
             .putString("rec_memo", preferences.memoText)
+            .putString("appearance", preferences.appearance.name)
+            .putBoolean("english", preferences.english)
             .apply()
     }
 }

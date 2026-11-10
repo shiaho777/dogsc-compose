@@ -132,6 +132,10 @@ class DogScAppState(
         private set
     var memoText by mutableStateOf("")
         private set
+    var appearance by mutableStateOf(dev.dogsc.app.platform.AppAppearance.SYSTEM)
+        private set
+    var english by mutableStateOf(false)
+        private set
 
     private var previewJob: Job? = null
     private var pendingPreviewTime: Double? = null
@@ -191,7 +195,21 @@ class DogScAppState(
             recordingOptions = prefs.recording
             exportSoundEnabled = prefs.exportSoundEnabled
             memoText = prefs.memoText
+            appearance = prefs.appearance
+            english = prefs.english
+            dev.dogsc.app.ui.Loc.applyEnglish(english)
         }
+    }
+
+    fun updateEnglish(value: Boolean) {
+        english = value
+        dev.dogsc.app.ui.Loc.applyEnglish(value)
+        persistPreferences()
+    }
+
+    fun updateAppearance(value: dev.dogsc.app.platform.AppAppearance) {
+        appearance = value
+        persistPreferences()
     }
 
     fun updateMemoText(text: String) {
@@ -214,6 +232,8 @@ class DogScAppState(
             recording = recordingOptions,
             exportSoundEnabled = exportSoundEnabled,
             memoText = memoText,
+            appearance = appearance,
+            english = english,
         )
         scope.launch { runCatching { platform.savePreferences(snapshot) } }
     }
@@ -1048,7 +1068,8 @@ class DogScAppState(
     }
 
     fun showToast(text: String, isError: Boolean = false) {
-        val message = ToastMessage(++toastCounter, text, isError)
+        val localized = dev.dogsc.app.ui.Loc.t(text)
+        val message = ToastMessage(++toastCounter, localized, isError)
         toast = message
         toastJob?.cancel()
         toastJob = scope.launch {

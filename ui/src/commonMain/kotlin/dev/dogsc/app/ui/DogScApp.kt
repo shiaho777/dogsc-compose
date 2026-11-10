@@ -24,7 +24,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import dev.dogsc.app.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -90,7 +90,13 @@ fun DogScApp(host: DogScHost) {
 
     OnAppBackground { state.flushPendingSave() }
 
-    DogScTheme {
+    val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val darkTheme = when (state.appearance) {
+        dev.dogsc.app.platform.AppAppearance.LIGHT -> false
+        dev.dogsc.app.platform.AppAppearance.DARK -> true
+        dev.dogsc.app.platform.AppAppearance.SYSTEM -> systemDark
+    }
+    DogScTheme(darkTheme = darkTheme) {
         Box(Modifier.fillMaxSize().background(DogScColors.Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (state.showOnboarding) {
                 OnboardingScreen(state = state, host = host)
