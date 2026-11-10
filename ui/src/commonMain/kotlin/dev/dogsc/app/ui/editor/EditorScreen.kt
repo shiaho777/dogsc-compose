@@ -108,7 +108,7 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
             .focusable()
             .onPreviewKeyEvent { event -> handleEditorKey(state, event) },
     ) {
-        val wide = maxWidth >= 880.dp
+        val wide = isWideLayout(maxWidth.value)
         Column(Modifier.fillMaxSize()) {
             EditorTopBar(
                 state = state,
@@ -571,7 +571,7 @@ private fun TransportBar(
         ) {
             Icon(
                 if (state.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                contentDescription = if (state.isPlaying) "暂停" else "播放",
+                contentDescription = dev.dogsc.app.ui.Loc.t(if (state.isPlaying) "暂停" else "播放"),
                 tint = DogScColors.OnAccent,
                 modifier = Modifier.size(18.dp),
             )

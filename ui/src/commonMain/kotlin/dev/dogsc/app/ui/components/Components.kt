@@ -160,7 +160,7 @@ fun SoftIconButton(
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = contentDescription,
+            contentDescription = contentDescription?.let { dev.dogsc.app.ui.Loc.t(it) },
             tint = if (enabled) tint else tint.copy(alpha = 0.32f),
             modifier = Modifier.size(iconSize),
         )

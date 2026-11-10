@@ -191,6 +191,9 @@ class AndroidDogScPlatform(
         repository.releasePreviewFrames()
     }
 
+    override fun clampExportDimensions(width: Int, height: Int): Pair<Int, Int> =
+        dev.dogsc.app.android.export.EncoderCapabilities.clamp(width, height)
+
     override fun playExportSound() {
         runCatching {
             val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)

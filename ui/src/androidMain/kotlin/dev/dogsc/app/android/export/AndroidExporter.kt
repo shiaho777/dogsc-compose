@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
@@ -122,8 +123,12 @@ class AndroidExporter(
                         CanvasDimensions(screenSource.width, screenSource.height),
                     )
                 }
-                val outputWidth = (dimensions.width / 2 * 2).coerceAtLeast(2)
-                val outputHeight = (dimensions.height / 2 * 2).coerceAtLeast(2)
+                val requestedWidth = (dimensions.width / 2 * 2).coerceAtLeast(2)
+                val requestedHeight = (dimensions.height / 2 * 2).coerceAtLeast(2)
+                val (outputWidth, outputHeight) = resolveEncoderSize(requestedWidth, requestedHeight)
+                if (outputWidth != requestedWidth || outputHeight != requestedHeight) {
+                    Log.w("DogSCExport", "encoder cannot do ${requestedWidth}x$requestedHeight; using ${outputWidth}x$outputHeight")
+                }
 
                 val cacheDir = File(context.cacheDir, "DogSCExport").apply { mkdirs() }
                 val tempVideo = File(cacheDir, "video-${System.currentTimeMillis()}.mp4")
@@ -283,7 +288,7 @@ class AndroidExporter(
                 finalFile.delete()
                 onProgress(ExportProgress(1f, "导出完成"))
                 closeSources()
-                ExportResult.Success(request.outputUri, size)
+                ExportResult.Success(request.outputUri, size, outputWidth, outputHeight)
             } catch (error: Throwable) {
                 Log.e("DogSCExport", "export failed", error)
                 if (cancelled) ExportResult.Cancelled
@@ -355,6 +360,10 @@ class AndroidExporter(
         }
     }
 }
+
+    /** Not every Android encoder supports 4K; fall back to the largest size it reports. */
+    private fun resolveEncoderSize(width: Int, height: Int): Pair<Int, Int> =
+        EncoderCapabilities.clamp(width, height)
 
 private class CanvasVideoEncoder(
     private val width: Int,

@@ -99,13 +99,13 @@ Last updated: 2026-11-04.
 | MP4 H.264 + AAC | Canvas renderer + MediaCodec + MediaMuxer | Done | 1920×1080/30, 12.03 s, AAC; frame extracted and compared |
 | M4A audio-only | Audio track copy fast path | Done | 190 KB M4A for a 12 s clip |
 | 30/60 FPS | Encoder settings | Done | |
-| Source/1080p/1440p/4K | Canvas dimensions + encoder | Partial | 4K not performance-verified |
+| Source/1080p/1440p/4K | Canvas dimensions + encoder, clamped to the encoder's reported maximum | Done | Emulator: a 4K request was clamped to 1620×910 (software AVC encoder), exported 10.28 s H.264/AAC in ~6 s; the export sheet shows the effective size and an encoder-limit note |
 | Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur; preview audio applies each slice's speed on item transitions | Done | 2D, 3D, stickers, mosaic and custom backgrounds match; cuts and per-clip volume were already honoured |
 | Estimated size/ETA | Bitrate policy + live progress | Done | Header and size follow the current resolution/FPS selection and the real source size (`ExportEstimatorTest` 4/4; emulator: 原始素材 1280×720 ≈17.5 MB, 1080p ≈30 MB, 4K ≈119 MB) |
 | Export completion state | Progress cleared on success; result card with share/re-export | Done | Emulator: after export the sheet shows 导出完成 · 14.7 MB · 分享 · 重新导出 |
 | Cancel export | Volatile cancel flag + UI | Done | |
 | Export selection/trim | Range slider in export sheet (header duration and size estimate follow the range); video/audio renderer trims and re-bases timestamps | Done | The audit found the slider was only imported, never rendered; added it. On `emulator-5556`, a 12.03 s project trimmed to 6.74 s exported a 6.75 s H.264/AAC file whose frames best match the full export at a 2.7 s offset. An untouched range snaps to the full timeline |
-| Long-recording performance | CPU Canvas + native YUV | Partial | ~4× realtime at 1080p30 on emulator; GL renderer required |
+| Long-recording performance | CPU Canvas + native YUV | Partial | Emulator: 57.5 s timeline at 864×1920/60 exported in ~55 s (~1× realtime), 9.4 MB H.264+AAC; a GPU renderer is still the way to speed this up |
 
 ## Product surface
 

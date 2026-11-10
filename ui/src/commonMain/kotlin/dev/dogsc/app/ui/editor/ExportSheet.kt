@@ -94,6 +94,16 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
             sourcePixelSize = sourcePixelSize,
         )
     }
+    val effectiveSize = remember(estimate.width, estimate.height) {
+        state.platform.clampExportDimensions(estimate.width, estimate.height)
+    }
+    val clamped = effectiveSize.first != estimate.width || effectiveSize.second != estimate.height
+    val effectiveBytes = if (clamped) {
+        estimate.estimatedBytes * effectiveSize.first * effectiveSize.second /
+            max(estimate.width * estimate.height, 1)
+    } else {
+        estimate.estimatedBytes
+    }
     val progress = state.exportProgress
     val lastExport = state.lastExport
 
@@ -114,10 +124,17 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
             Text("导出作品", color = DogScColors.PrimaryText, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
             Text(
-                "${formatTimecode(exportDuration)} · ${estimate.width}×${estimate.height}",
+                "${formatTimecode(exportDuration)} · ${effectiveSize.first}×${effectiveSize.second}",
                 color = DogScColors.TertiaryText,
                 style = MaterialTheme.typography.bodySmall,
             )
+            if (clamped) {
+                Text(
+                    "编码器上限：${estimate.width}×${estimate.height} → ${effectiveSize.first}×${effectiveSize.second}",
+                    color = DogScColors.Amber,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Spacer(Modifier.height(16.dp))
             SegmentedControl(
                 options = listOf("视频成片", "仅音频"),
@@ -224,7 +241,7 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
                         Text("预计大小", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.weight(1f))
                         Text(
-                            "约 ${formatFileSize(if (audioOnly) (192_000L / 8 * state.outputDuration).toLong() else estimate.estimatedBytes)}",
+                            "约 ${formatFileSize(if (audioOnly) (192_000L / 8 * state.outputDuration).toLong() else effectiveBytes)}",
                             color = DogScColors.PrimaryText,
                             style = MaterialTheme.typography.labelMedium,
                         )

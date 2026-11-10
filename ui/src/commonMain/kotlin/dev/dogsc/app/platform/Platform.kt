@@ -48,7 +48,12 @@ data class ExportProgress(
 )
 
 sealed class ExportResult {
-    data class Success(val outputUri: String, val sizeBytes: Long) : ExportResult()
+    data class Success(
+        val outputUri: String,
+        val sizeBytes: Long,
+        val width: Int = 0,
+        val height: Int = 0,
+    ) : ExportResult()
     data class Failure(val message: String) : ExportResult()
     data object Cancelled : ExportResult()
 }
@@ -130,6 +135,9 @@ interface DogScPlatform {
     fun pausePreviewAudio() {}
     fun releasePreviewAudio() {}
     fun releasePreviewFrames() {}
+
+    /** Clamps an export size to what the platform encoder supports (identity by default). */
+    fun clampExportDimensions(width: Int, height: Int): Pair<Int, Int> = width to height
 }
 
 data class MediaProbe(

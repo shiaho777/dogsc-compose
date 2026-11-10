@@ -1019,7 +1019,7 @@ class DogScAppState(
             if (result is ExportResult.Success) {
                 exportProgressState = null
                 if (exportSoundEnabled) platform.playExportSound()
-                showToast("已导出 ${formatFileSize(result.sizeBytes)}")
+                showToast(if (result.width > 0) "已导出 ${result.width}×${result.height} · ${formatFileSize(result.sizeBytes)}" else "已导出 ${formatFileSize(result.sizeBytes)}")
             } else if (result is ExportResult.Failure) {
                 exportProgressState = null
                 showToast(result.message, isError = true)

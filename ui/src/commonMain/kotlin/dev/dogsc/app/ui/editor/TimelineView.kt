@@ -368,7 +368,7 @@ private fun TimelineCanvas(
                         if (pressed.size >= 2) {
                             val distance = (pressed[0].position - pressed[1].position).getDistance()
                             if (lastDistance > 0f && distance > 0f) {
-                                val factor = (distance / lastDistance).coerceIn(0.8f, 1.25f)
+                                val factor = pinchScaleFactor(lastDistance, distance)
                                 state.timelinePixelsPerSecond =
                                     (state.timelinePixelsPerSecond * factor).coerceIn(4f, 400f)
                             }
