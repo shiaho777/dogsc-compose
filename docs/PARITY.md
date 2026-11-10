@@ -49,7 +49,7 @@ Last updated: 2026-11-04.
 | Sticker track | Clips with timing and layer order | Done | |
 | Markers | Ruler lines + list/jump/delete | Done | |
 | Snapping | Boundary snapping with 7 px threshold | Done | Toggle state exists; UI toggle is implicit |
-| Timeline zoom | +/- / fit buttons and two-finger pinch | Partial | Pinch implemented; not yet verified with multi-touch input |
+| Timeline zoom | +/- / fit buttons and two-finger pinch | Done | `PinchInjectionTest` injects a real two-finger gesture through `UiAutomation`; before/after screenshots show the tick spacing grow from ~145 px/s to ~350 px/s |
 | Hover preview | Playhead scrubbing updates the preview | Done | Touch platform substitute for pointer hover |
 | Cut-boundary restore affordance | Menu action at playhead | Done | Touch has no hover/right-click; the restore menu acts on the playhead and lists the same operations |
 | Editor audio preview | ExoPlayer plays the primary audio through one clipped item per timeline slice; volume follows the project; uniform speed becomes the player rate | Done | Emulator: `dumpsys audio` shows a 48 kHz `AudioTrack` in `state:started` while playing and `state:paused` after Space |
@@ -120,6 +120,7 @@ Last updated: 2026-11-04.
 | Localization | Chinese and English, switchable in Settings; dynamic strings handled by pattern rules | Done | Emulator: switching to English re-rendered the settings page (`Settings`, `Appearance`, `Recording & permissions`); the choice persists |
 | Menu/shortcut reference | Bottom sheet listing the implemented bindings | Done | Every listed key is handled by the editor (`handleEditorKey`); verified Space, arrows, S, Ctrl+Z, Ctrl+Shift+Z on the emulator |
 | Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Done | Emulator at 1600×2560 / density 240: the inspector rail sits at x 1138–1553 and the timeline keeps its controls |
+| Automated UI tests | Instrumentation test for multi-touch timeline zoom | Done | `androidApp/src/androidTest/.../PinchInjectionTest.kt`; `am instrument` passes on the emulator |
 | iOS/desktop/web | Shared core/UI prepared; no targets yet | Gap | Android first; commonMain currently has no Android imports |
 
 ## Audit notes

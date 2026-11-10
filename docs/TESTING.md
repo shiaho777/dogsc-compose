@@ -70,7 +70,7 @@ Screenshots are judged by UI dumps (`uiautomator dump`) and PIL pixel sampling, 
 - 4K requests fall back to the encoder's largest supported size; hour-long recordings have not been profiled (57.5 s was measured at ~1× realtime).
 - Multi-window/tablet layout is verified at 1600×2560 / density 240 on the emulator.
 - The PCM mixer path (multiple sources or non-default volume) needs a dedicated timing test.
-- No automated UI/instrumentation tests yet; the current evidence is build + core tests + manual emulator runs + extracted export frames.
+- Automated instrumentation coverage is currently the timeline pinch (`PinchInjectionTest`); the rest of the evidence is build + core tests + manual emulator runs + extracted export frames.
 
 ## Performance checks
 
@@ -81,3 +81,4 @@ Screenshots are judged by UI dumps (`uiautomator dump`) and PIL pixel sampling, 
 - **Long recording**: export a ~1 minute timeline and compare wall time with duration; log timestamps `video start` / `video encoded` / `DogSCAudio: encode done`.
 - **Camera PiP**: enable Camera overlay, grant the camera permission, record 10 s, stop. `media/camera.mp4` must exist (H.264, non-black); the editor must draw the PiP with the same crop as the export. Add a fullscreen camera motion at the playhead and export a short range; the exported frame must match the preview.
 - **Dynamic background export**: set a dynamic background, export a range that includes two visible background moments, extract both frames and compare the border regions. Emulator: 10.8 s cyber-drift export, border mean difference 2.9–4.2 with thousands of pixels above a 4/255 threshold; the background must never turn black after the first frame.
+- **Timeline pinch**: with a project open, run `adb shell am instrument -w -e class dev.dogsc.app.PinchInjectionTest dev.dogsc.app.test/androidx.test.runner.AndroidJUnitRunner`. The test opens the first project, injects a two-finger spread, and asserts the timeline region changed; screenshots land in the app's external files as `pinch_before.png` / `pinch_after.png`.

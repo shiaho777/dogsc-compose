@@ -52,6 +52,9 @@ dependencies {
     implementation(compose.foundation)
     implementation(compose.material3)
     debugImplementation(compose.uiTooling)
+    androidTestImplementation("androidx.test:core:1.5.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("junit:junit:4.13.2")
 }
 
 kotlin {
