@@ -99,7 +99,7 @@ Last updated: 2026-11-10.
 |---|---|---|---|
 | MP4 H.264 + AAC | Canvas renderer + MediaCodec + MediaMuxer | Done | 1920×1080/30, 12.03 s, AAC; frame extracted and compared |
 | M4A audio-only | Audio track copy fast path | Done | 190 KB M4A for a 12 s clip |
-| Audio-only header | Export sheet shows duration · M4A and hides the video encoder-limit note | Done 
+| Audio-only header | Export sheet shows duration · M4A and hides the video encoder-limit note | Done | Emulator: selecting Audio only changes the header to `duration · M4A` and suppresses the video encoder-limit note |
 | 30/60 FPS | Encoder settings | Done | 30 fps export `r_frame_rate=30/1`; 60 fps long/camera exports `r_frame_rate=60/1` |
 | Source/1080p/1440p/4K | Canvas dimensions + encoder, clamped to the encoder's reported maximum | Done | Emulator: a 4K request was clamped to 1620×910 (software AVC encoder), exported 10.28 s H.264/AAC in ~6 s; the export sheet shows the effective size and an encoder-limit note |
 | Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur; preview audio applies each slice's speed on item transitions | Done | 2D, 3D, stickers, mosaic and custom backgrounds match; cuts and per-clip volume were already honoured |
