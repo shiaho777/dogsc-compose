@@ -29,6 +29,8 @@ interface DogScHost {
 
     fun hasCameraPermission(): Boolean = true
     fun requestCameraPermission() {}
+    fun isOverlayPermissionGranted(): Boolean = true
+    fun openOverlaySettings() {}
 
     fun pickVideo(onResult: (String?) -> Unit)
     fun pickImage(onResult: (String?) -> Unit)

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.ScreenShare
 import androidx.compose.material.icons.outlined.TouchApp
@@ -64,8 +65,12 @@ import org.jetbrains.compose.resources.painterResource
 fun SettingsScreen(state: DogScAppState, host: DogScHost) {
     val platform = host.platform
     var accessibilityEnabled by remember { mutableStateOf(host.isAccessibilityServiceEnabled()) }
+    var overlayGranted by remember { mutableStateOf(host.isOverlayPermissionGranted()) }
     var showClearTrashDialog by remember { mutableStateOf(false) }
-    dev.dogsc.app.ui.OnAppForeground { accessibilityEnabled = host.isAccessibilityServiceEnabled() }
+    dev.dogsc.app.ui.OnAppForeground {
+        accessibilityEnabled = host.isAccessibilityServiceEnabled()
+        overlayGranted = host.isOverlayPermissionGranted()
+    }
     Column(
         Modifier
             .fillMaxSize()
@@ -158,6 +163,17 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                         else "需要无障碍服务；不启用仍可正常录屏"
                     } else "当前平台不支持",
                     action = { host.openAccessibilitySettings() },
+                )
+                HairlineDivider(Modifier.padding(horizontal = 8.dp))
+                PermissionRow(
+                    icon = Icons.Outlined.PictureInPictureAlt,
+                    title = "悬浮控制条",
+                    subtitle = if (overlayGranted) {
+                        "已启用，录制时可暂停、标记和停止"
+                    } else {
+                        "需要悬浮窗权限；未授权时只能使用通知控制"
+                    },
+                    action = { host.openOverlaySettings() },
                 )
                 HairlineDivider(Modifier.padding(horizontal = 8.dp))
                 PermissionRow(

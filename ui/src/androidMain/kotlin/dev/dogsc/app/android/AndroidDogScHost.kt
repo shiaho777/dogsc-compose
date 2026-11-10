@@ -128,6 +128,19 @@ class AndroidDogScHost(
         return accessibilityEnabled && enabled.split(':').any { it.equals(expected, ignoreCase = true) }
     }
 
+    override fun isOverlayPermissionGranted(): Boolean = Settings.canDrawOverlays(activity)
+
+    override fun openOverlaySettings() {
+        runCatching {
+            activity.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${activity.packageName}"),
+                ),
+            )
+        }
+    }
+
     override fun openAppSettings() = platform.openAppSettings()
 
     override fun openAccessibilitySettings() = platform.openAccessibilitySettings()

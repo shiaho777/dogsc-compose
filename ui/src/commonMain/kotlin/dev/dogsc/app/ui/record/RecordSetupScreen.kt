@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.ScreenShare
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Videocam
@@ -61,9 +62,11 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
     }
     var accessibilityEnabled by remember { mutableStateOf(host.isAccessibilityServiceEnabled()) }
     var cameraGranted by remember { mutableStateOf(host.hasCameraPermission()) }
+    var overlayGranted by remember { mutableStateOf(host.isOverlayPermissionGranted()) }
     dev.dogsc.app.ui.OnAppForeground {
         accessibilityEnabled = host.isAccessibilityServiceEnabled()
         cameraGranted = host.hasCameraPermission()
+        overlayGranted = host.isOverlayPermissionGranted()
     }
 
     Column(
@@ -257,6 +260,36 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
             }
         }
 
+        if (!overlayGranted) {
+            Spacer(Modifier.height(14.dp))
+            SoftCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp)) {
+                Row(
+                    Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Outlined.PictureInPictureAlt, null, tint = DogScColors.SecondaryText)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "悬浮控制条",
+                            color = DogScColors.PrimaryText,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "录制时暂停、标记和停止；未授权时只能使用通知控制",
+                            color = DogScColors.TertiaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    PillButton(
+                        "授权",
+                        onClick = { host.openOverlaySettings() },
+                        variant = PillVariant.Ghost,
+                        compact = true,
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(14.dp))
         SoftCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp)) {
             Column(Modifier.padding(14.dp)) {

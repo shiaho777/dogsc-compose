@@ -72,3 +72,7 @@ Android's CameraX binds one `VideoCapture` to one lens for the lifetime of a rec
 ## 16. Camera framing is visible before capture
 
 The capture setup screen binds a CameraX `Preview` to the activity lifecycle, so the user can frame the shot before pressing Start. Only the Preview use case is unbound when the screen leaves; the recorder's `VideoCapture` binds independently, so the setup preview cannot tear down an active recording. Front-lens previews are mirrored on screen to match the default mirrored PiP. If camera permission is missing, the card offers a grant button; a permanently denied permission opens the app settings instead of silently doing nothing.
+
+## 17. The floating bar requests overlay permission explicitly
+
+`TYPE_APPLICATION_OVERLAY` is the only Android surface that can float over other apps during capture. A fresh install has no overlay grant, so the setup and settings screens expose a permission card with the exact consequence: without it, pause/mark/stop remain available only from the foreground notification. The overlay window carries `FLAG_KEEP_SCREEN_ON` as well as `FLAG_SECURE`, so the screen stays awake while the controls are visible and the controls never enter the recording. When the permission is denied the activity's window flag is still used while the app is foreground, and the notification remains the fallback control surface.
