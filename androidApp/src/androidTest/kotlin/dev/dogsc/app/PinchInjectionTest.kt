@@ -1,6 +1,7 @@
 package dev.dogsc.app
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -24,17 +25,18 @@ class PinchInjectionTest {
             val ui = instrumentation.uiAutomation
             val target = instrumentation.targetContext
 
-            waitForText(ui, "Recent projects", 15_000)
             var card: AccessibilityNodeInfo? = null
             val cardDeadline = SystemClock.uptimeMillis() + 15_000
             while (card == null && SystemClock.uptimeMillis() < cardDeadline) {
-                card = findFirstProject(ui.rootInActiveWindow)
+                card = findFirstCard(ui.rootInActiveWindow)
                 if (card == null) SystemClock.sleep(300)
             }
             checkNotNull(card) { "no project card" }
-            tap(ui, 540f, 1_300f)
+            val bounds = Rect()
+            card.getBoundsInScreen(bounds)
+            tap(ui, bounds.exactCenterX(), bounds.exactCenterY())
 
-            waitForText(ui, "Timeline", 15_000)
+            waitForText(ui, listOf("Timeline", "时间线"), 15_000)
             SystemClock.sleep(1_500)
             val before = ui.takeScreenshot()
             save(before, File(target.getExternalFilesDir(null), "pinch_before.png"))
@@ -128,13 +130,13 @@ class PinchInjectionTest {
         event.recycle()
     }
 
-    private fun waitForText(ui: android.app.UiAutomation, text: String, timeoutMs: Long) {
+    private fun waitForText(ui: android.app.UiAutomation, texts: List<String>, timeoutMs: Long) {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (containsText(ui.rootInActiveWindow, text)) return
+            if (texts.any { containsText(ui.rootInActiveWindow, it) }) return
             SystemClock.sleep(250)
         }
-        error("timed out waiting for '$text'")
+        error("timed out waiting for $texts")
     }
 
     private fun containsText(node: AccessibilityNodeInfo?, text: String): Boolean {
@@ -146,12 +148,16 @@ class PinchInjectionTest {
         return false
     }
 
-    private fun findFirstProject(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+    private fun findFirstCard(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
-        val value = node.text?.toString().orEmpty()
-        if (value.startsWith("录制") || value.startsWith("导入的视频")) return node
+        if (node.isClickable) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            // The project thumbnail is the first large clickable card below the header.
+            if (bounds.height() > 300 && bounds.top > 800) return node
+        }
         for (index in 0 until node.childCount) {
-            findFirstProject(node.getChild(index))?.let { return it }
+            findFirstCard(node.getChild(index))?.let { return it }
         }
         return null
     }
