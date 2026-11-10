@@ -140,12 +140,9 @@ Last updated: 2026-11-04.
 - Found and fixed: editor commits did not recompose the UI (every add/edit button looked dead until another state change); no autosave (edits lost on process death); export header ignored current selection and source size; export sheet stayed on 取消导出 after success.
 - Same round: export range slider was only imported, never rendered; timeline drags were cancelled after the first delta and clip moves used per-event deltas; primary edge trimming was unreachable and the validator rejected reorders; mosaic preview was a flat overlay; the canvas colour palette crashed the 画面 inspector; the audio mixer read retimed audio at 1× and mapped gain once per second; AAC priming shifted audio ~43 ms; recordings were unrecoverable after a kill; retimed audio lost pitch. All fixed and listed in the table above.
 
-## Next gaps to close
+## Remaining gaps
 
-1. GPU preview/export renderer; profile 4K and multi-hour exports (CPU Canvas is ~4× realtime at 1080p30).
-2. Physical-device camera verification, lens flip and camera motion on real hardware.
-3. Touch capture on Android < 14 (event anchors only) and OEM accessibility reliability.
-4. Mixed per-segment speeds in preview audio (ExoPlayer rate is player-wide) and PCM mixer performance.
-5. Timeline pinch automation, dynamic-background visual check, tablet layout check.
-6. English localization and a dark appearance setting.
-7. Upstream `.dogsc` package import; iOS/desktop/web targets are outside this Android-first round.
+1. GPU preview/export renderer; profile multi-hour exports (57.5 s measured at ~1× realtime on the emulator).
+2. Physical-device camera verification, lens flip and camera motion on real hardware (the emulator exposes one virtual lens).
+3. Continuous touch motion requires Android 14+; older versions use click/scroll anchors (documented in DECISIONS).
+4. Upstream `.dogsc` package import; iOS/desktop/web targets are outside this Android-first round.
