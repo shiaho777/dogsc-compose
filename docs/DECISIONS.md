@@ -43,7 +43,7 @@ The accessibility service only records normalized click/scroll positions. It doe
 
 ## 9. Project storage is a directory package
 
-`projects/<uuid>/project.json` plus `media/` mirrors upstream's package model. Media stays with the project; deleting moves the directory to `trash/`. This makes backup, duplication and future `.dogsc` import straightforward.
+`projects/<uuid>/project.json` plus `media/` mirrors upstream's package model. Media stays with the project; deleting moves the directory to `trash/`, and Settings lists the trash with per-project Restore. This makes backup, duplication and future `.dogsc` import straightforward; the delete dialog no longer promises recovery from a system file manager that Android's scoped storage does not expose.
 
 ## 10. Keep the visual language
 

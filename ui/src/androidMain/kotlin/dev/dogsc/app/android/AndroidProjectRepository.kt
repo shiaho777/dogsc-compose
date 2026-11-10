@@ -99,6 +99,23 @@ class AndroidProjectRepository(private val context: Context) {
         source.renameTo(destination)
     }
 
+    suspend fun loadTrash(): List<ProjectSummary> = withContext(Dispatchers.IO) {
+        trashDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.mapNotNull { loadSummary(it) }
+            ?.sortedByDescending { it.updatedAtEpochMs }
+            ?: emptyList()
+    }
+
+    suspend fun restoreProject(id: String): Boolean = withContext(Dispatchers.IO) {
+        val source = trashDir.listFiles()
+            ?.firstOrNull { it.isDirectory && it.name.startsWith("$id-") }
+            ?: return@withContext false
+        val destination = File(projectsDir, id)
+        if (destination.exists()) return@withContext false
+        source.renameTo(destination)
+    }
+
     suspend fun duplicateProject(id: String): Boolean = withContext(Dispatchers.IO) {
         val source = File(projectsDir, id)
         if (!source.exists()) return@withContext false

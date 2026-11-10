@@ -199,7 +199,7 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("删除这个项目？") },
-            text = { Text("项目和其中的录制素材会移到废纸篓，需要时可以恢复。") },
+            text = { Text("项目和其中的录制素材会移到回收站，可在设置中恢复。") },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteDialog = false

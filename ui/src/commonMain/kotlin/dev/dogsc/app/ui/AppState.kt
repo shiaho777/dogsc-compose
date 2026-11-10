@@ -74,6 +74,8 @@ class DogScAppState(
         private set
     var projects by mutableStateOf<List<ProjectSummary>>(emptyList())
         private set
+    var trashedProjects by mutableStateOf<List<ProjectSummary>>(emptyList())
+        private set
     var isLoadingProjects by mutableStateOf(true)
         private set
     var toast by mutableStateOf<ToastMessage?>(null)
@@ -282,7 +284,23 @@ class DogScAppState(
         scope.launch {
             isLoadingProjects = true
             projects = platform.listProjects().sortedByDescending { it.updatedAtEpochMs }
+            trashedProjects = platform.loadTrash()
             isLoadingProjects = false
+        }
+    }
+
+    fun restoreProject(summary: ProjectSummary) {
+        scope.launch {
+            isBusy = true
+            busyMessage = "正在恢复项目"
+            val restored = platform.restoreProject(summary.id)
+            isBusy = false
+            if (restored) {
+                refreshProjects()
+                showToast("已恢复项目")
+            } else {
+                showToast("恢复失败", isError = true)
+            }
         }
     }
 
@@ -1048,7 +1066,7 @@ class DogScAppState(
             isBusy = false
             if (deleted) {
                 refreshProjects()
-                showToast("已移到废纸篓")
+                showToast("已移到回收站")
             } else {
                 showToast("删除失败", isError = true)
             }

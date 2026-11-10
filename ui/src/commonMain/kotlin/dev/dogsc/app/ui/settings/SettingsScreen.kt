@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.ScreenShare
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Icon
@@ -43,6 +44,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.dogsc.app.platform.DogScHost
 import dev.dogsc.app.ui.DogScAppState
+import dev.dogsc.app.ui.formatDate
+import dev.dogsc.app.ui.formatDurationShort
 import dev.dogsc.app.ui.components.HairlineDivider
 import dev.dogsc.app.ui.components.PillButton
 import dev.dogsc.app.ui.components.PillVariant
@@ -248,10 +251,49 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                     Column(Modifier.weight(1f)) {
                         Text("项目保存在应用专属目录", color = DogScColors.PrimaryText, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "共 ${state.projects.size} 个项目；删除后可在系统文件管理器中恢复应用数据前找回。",
+                            "共 ${state.projects.size} 个项目；删除的项目可在回收站中恢复。",
                             color = DogScColors.TertiaryText,
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        SectionTitle("回收站")
+        SoftCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (state.trashedProjects.isEmpty()) {
+                    Text(
+                        "没有已删除的项目",
+                        color = DogScColors.TertiaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    state.trashedProjects.forEach { summary ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.Restore, null, tint = DogScColors.SecondaryText)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    summary.title,
+                                    color = DogScColors.PrimaryText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    "${formatDate(summary.updatedAtEpochMs)} · ${formatDurationShort(summary.durationSeconds)}",
+                                    color = DogScColors.TertiaryText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            PillButton(
+                                "恢复",
+                                onClick = { state.restoreProject(summary) },
+                                variant = PillVariant.Ghost,
+                                compact = true,
+                            )
+                        }
                     }
                 }
             }

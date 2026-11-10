@@ -101,6 +101,8 @@ interface DogScPlatform {
     suspend fun loadProject(id: String): LoadedProject?
     suspend fun saveProject(project: RecorderProject): Boolean
     suspend fun deleteProject(id: String): Boolean
+    suspend fun loadTrash(): List<ProjectSummary> = emptyList()
+    suspend fun restoreProject(id: String): Boolean = false
     suspend fun duplicateProject(id: String): Boolean
     suspend fun renameProject(id: String, title: String): Boolean
 
