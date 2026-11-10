@@ -273,7 +273,10 @@ internal class RecordingCoordinator(
     private var overlay: RecordingOverlay? = null
     private var timerJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main + Job())
-    private val startedAt = SystemClock.elapsedRealtime()
+    private var startedAt = SystemClock.elapsedRealtime()
+    private var screenStartedAtMs = 0L
+    private var cameraStartedAtMs = 0L
+    private var screenStarted = false
     private var pausedAt: Long? = null
     private var pausedTotalMs = 0L
     private val pauseIntervals = mutableListOf<Pair<Double, Double>>()
@@ -289,6 +292,32 @@ internal class RecordingCoordinator(
         // The journal must exist before the first fragment is written; otherwise a crash in the
         // first moments would leave an orphan media directory that the library cannot surface.
         runCatching { runBlocking(Dispatchers.IO) { repository.saveProject(preliminaryProject()) } }
+        if (options.camera) {
+            val recorder = CameraRecorder(context, options.cameraLensFacing, cameraFile)
+            cameraRecorder = recorder
+            recorder.start { ready ->
+                if (stopping) return@start
+                cameraRunning = ready
+                cameraStartedAtMs = recorder.startedAtElapsedMs
+                if (!ready) onError("摄像头启动失败")
+                // CameraX takes a moment to open the lens. Start the screen only once the camera
+                // is actually recording so the two tracks share a zero point (no lip-sync offset).
+                startScreenAndAudio()
+            }
+            // A camera that never reports must not block the screen recording.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                if (!stopping) startScreenAndAudio()
+            }, 8_000)
+        } else {
+            startScreenAndAudio()
+        }
+    }
+
+    private fun startScreenAndAudio() {
+        if (screenStarted || stopping) return
+        screenStarted = true
+        startedAt = SystemClock.elapsedRealtime()
+        screenStartedAtMs = startedAt
         runCatching {
             screenRecorder = ScreenRecorder(projection, width, height, densityDpi, options.frameRate, screenFile).also { it.start() }
         }.onFailure {
@@ -309,13 +338,6 @@ internal class RecordingCoordinator(
                     onError("系统声音启动失败")
                     systemRecorder = null
                 }
-            }
-        }
-        if (options.camera) {
-            cameraRecorder = CameraRecorder(context, options.cameraLensFacing, cameraFile)
-            cameraRecorder?.start { ready ->
-                cameraRunning = ready
-                if (!ready) onError("摄像头启动失败")
             }
         }
         if (options.touchCapture) {
@@ -381,6 +403,11 @@ internal class RecordingCoordinator(
     fun stop() {
         if (stopping) return
         stopping = true
+        if (!screenStarted) {
+            // Stopped during camera warm-up: there is no screen track to finalize.
+            discard()
+            return
+        }
         if (pausedAt != null) resume()
         timerJob?.cancel()
         overlay?.hide()
@@ -503,9 +530,30 @@ internal class RecordingCoordinator(
                 ),
                 camera = cameraFile.takeIf { it.exists() && it.length() > 0 }?.let { file ->
                     val probe = probeVideo(file)
+                    // Align the camera track with the screen zero point. A camera that opened
+                    // first contributes lead frames (trim them); a late camera appears at its
+                    // measured offset instead of shifting every frame.
+                    val lead = if (cameraStartedAtMs > 0 && screenStartedAtMs > 0) {
+                        (screenStartedAtMs - cameraStartedAtMs) / 1000.0
+                    } else {
+                        0.0
+                    }
+                    val sourceStart = if (probe.duration > 0.1) {
+                        lead.coerceIn(0.0, max(probe.duration - 0.1, 0.0))
+                    } else {
+                        0.0
+                    }
+                    val playable = if (probe.duration > 0.1) {
+                        max(probe.duration - sourceStart, 0.1)
+                    } else {
+                        rawDuration
+                    }
                     ProjectMediaReference(
                         relativePath = "media/camera.mp4",
-                        durationSeconds = if (probe.duration > 0.1) probe.duration else rawDuration,
+                        startOffset = if (lead < 0.0) -lead else 0.0,
+                        sourceStartTime = sourceStart,
+                        sourceEndTime = probe.duration.takeIf { it > 0.1 },
+                        durationSeconds = playable,
                         pixelWidth = probe.width.takeIf { it > 0 },
                         pixelHeight = probe.height.takeIf { it > 0 },
                     )

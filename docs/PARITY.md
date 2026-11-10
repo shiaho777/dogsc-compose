@@ -15,7 +15,7 @@ Last updated: 2026-11-04.
 | Record an iOS device | Import a recorded file | Done | Not applicable on Android; the import path covers the same workflow |
 | System audio | `AudioPlaybackCapture` (Android 10+) | Done | Recorded a 88.8 s AAC system track; source apps may opt out |
 | Microphone | `AudioRecord` + AAC encoder | Done | Separate `microphone.m4a`; mute writes aligned silence |
-| Camera PiP | CameraX `VideoCapture` in a background lifecycle; foreground service declares the camera type | Done | Emulator (virtual back camera): recorded a 3:27 session with a 1280×720 H.264 camera track; preview and exported frames both show the PiP, and the shared `CameraContentFill` crop matches. Front-lens requests fall back to the only available lens |
+| Camera PiP | CameraX `VideoCapture` in a background lifecycle; foreground service declares the camera type; lens chosen before capture | Done | Emulator: recorded with both the virtual back and front lenses (1280×720 H.264); the camera starts before the screen so both tracks share a zero point, and the project stores camera dimensions/duration. Preview and exported frames both show the PiP with the same `CameraContentFill` crop |
 | Touch/cursor track | Optional accessibility service; clicks/scroll anchors on every version, continuous motion on Android 14+ via `FLAG_SEND_MOTION_EVENTS` | Done | The documented platform equivalent: Android 14+ streams raw touch; older versions synthesise the cursor from click and scroll anchors |
 | Pause/resume | Pause intervals are cut out of the project timeline; recording continues | Done | `SourceSequence.Edited` from pause ranges |
 | Recording markers | Marker button/notification/overlay, persisted and shown on timeline | Done | `RecordingMarker` + marker sheet |
@@ -143,6 +143,6 @@ Last updated: 2026-11-04.
 ## Remaining gaps
 
 1. GPU preview/export renderer; profile multi-hour exports (57.5 s measured at ~1× realtime on the emulator).
-2. Physical-device camera verification and lens selection on real hardware (the setup screen selects the lens before capture; the emulator currently exposes one virtual lens).
+2. Physical-device camera verification (the emulator records through both virtual lenses; real sensors, focus/exposure and rotation still need hardware).
 3. Continuous touch motion requires Android 14+; older versions use click/scroll anchors (documented in DECISIONS).
 4. Upstream `.dogsc` package import; iOS/desktop/web targets are outside this Android-first round.

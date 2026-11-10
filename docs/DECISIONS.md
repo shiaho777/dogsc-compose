@@ -31,7 +31,7 @@ Most recordings have exactly one audio source and no per-segment overrides. Re-e
 
 ## 6. Camera recording in the foreground service
 
-CameraX is bound to a custom `LifecycleOwner` owned by the recording coordinator, not to the Activity. Moving DogSC to the background must not stop the camera. The foreground service keeps the process alive; CameraX writes a separate MP4 track. The final project treats camera as an independent media reference, exactly like upstream.
+CameraX is bound to a custom `LifecycleOwner` owned by the recording coordinator, not to the Activity. Moving DogSC to the background must not stop the camera. The foreground service keeps the process alive; CameraX writes a separate MP4 track. The final project treats camera as an independent media reference, exactly like upstream. The screen recorder is started from CameraX's `VideoRecordEvent.Start`, so the camera and screen share a zero point instead of the camera lagging by its warm-up time; if the camera opens late or not at all, the measured offset is written to the media reference and the screen starts after an 8 s fallback timeout.
 
 ## 7. Touch capture is optional and explicit
 

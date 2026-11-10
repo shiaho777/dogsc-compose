@@ -1,6 +1,7 @@
 package dev.dogsc.app.android.recording
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -33,6 +34,8 @@ class CameraRecorder(
     @Volatile var error: String? = null
         private set
     @Volatile var started = false
+        private set
+    @Volatile var startedAtElapsedMs: Long = 0L
         private set
 
     fun start(onReady: (Boolean) -> Unit) {
@@ -68,6 +71,7 @@ class CameraRecorder(
                     when (event) {
                         is VideoRecordEvent.Start -> {
                             started = true
+                            startedAtElapsedMs = SystemClock.elapsedRealtime()
                             onReady(true)
                         }
                         is VideoRecordEvent.Finalize -> {
