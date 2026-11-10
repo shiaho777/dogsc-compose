@@ -17,6 +17,13 @@ object Loc {
         english = value
     }
 
+    /** Compact labels for the floating recorder, where horizontal space is scarce. */
+    fun tShort(source: String): String {
+        if (!english) return source
+        Short[source]?.let { return it }
+        return t(source)
+    }
+
     fun t(source: String): String {
         if (!english) return source
         En[source]?.let { return it }
@@ -62,6 +69,17 @@ object Loc {
         Regex("""^缩放 (.+) · 手动$""") to "Zoom {1} · manual",
         Regex("""^点击重命名 · 已保存 · (.+)$""") to "Tap to rename · Saved · {1}",
         Regex("""^点击重命名 · 未保存 · (.+)$""") to "Tap to rename · Unsaved · {1}",
+    )
+
+    private val Short: Map<String, String> = mapOf(
+        "麦克风" to "Mic",
+        "摄像头" to "Cam",
+        "标记" to "Mark",
+        "已标记" to "Marked",
+        "备忘" to "Memo",
+        "暂停" to "Pause",
+        "继续" to "Resume",
+        "停止" to "Stop",
     )
 
     private val En: Map<String, String> = mapOf(

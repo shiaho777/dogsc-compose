@@ -57,24 +57,24 @@ internal class RecordingOverlay(
             textSize = 14f
             setPadding(dp(6), 0, dp(10), 0)
         }
-        pauseView = action(Loc.t("暂停")) {
+        pauseView = action(Loc.tShort("暂停")) {
             if (coordinator.isPaused()) {
                 coordinator.resume()
             } else {
                 coordinator.pause()
             }
         }
-        markerView = action(Loc.t("标记")) { coordinator.addMarker() }
-        micView = action(Loc.t("麦克风")) {
+        markerView = action(Loc.tShort("标记")) { coordinator.addMarker() }
+        micView = action(Loc.tShort("麦克风")) {
             val next = !coordinator.microphoneEnabled()
             AndroidRecorderManager.instance?.setMicrophoneEnabled(next)
         }
-        cameraView = action(Loc.t("摄像头")) {
+        cameraView = action(Loc.tShort("摄像头")) {
             val next = !coordinator.cameraEnabled()
             AndroidRecorderManager.instance?.setCameraEnabled(next)
         }
-        val memoButton = action(Loc.t("备忘")) { toggleMemo() }
-        val stop = action(Loc.t("停止")) { coordinator.stop() }.apply {
+        val memoButton = action(Loc.tShort("备忘")) { toggleMemo() }
+        val stop = action(Loc.tShort("停止")) { coordinator.stop() }.apply {
             setTextColor(Color.rgb(255, 120, 112))
         }
         container.addView(dot)
@@ -183,7 +183,7 @@ internal class RecordingOverlay(
     }
 
     fun setPaused(paused: Boolean) {
-        pauseView?.text = Loc.t(if (paused) "继续" else "暂停")
+        pauseView?.text = Loc.tShort(if (paused) "继续" else "暂停")
     }
 
     fun updateTime(seconds: Double) {
@@ -193,8 +193,8 @@ internal class RecordingOverlay(
 
     fun flashMarker() {
         val view = markerView ?: return
-        view.text = "已标记"
-        view.postDelayed({ view.text = "标记" }, 900)
+        view.text = Loc.tShort("已标记")
+        view.postDelayed({ view.text = Loc.tShort("标记") }, 900)
     }
 
     private fun action(text: String, onClick: () -> Unit): TextView = TextView(context).apply {

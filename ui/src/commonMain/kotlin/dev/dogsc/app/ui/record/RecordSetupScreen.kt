@@ -55,6 +55,10 @@ import dev.dogsc.app.ui.theme.DogScColors
 fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
     val platform = host.platform
     var options by remember { mutableStateOf(state.recordingOptions) }
+    fun applyOptions(next: RecordingOptions) {
+        options = next
+        state.updateRecordingDefaults { next }
+    }
     var accessibilityEnabled by remember { mutableStateOf(host.isAccessibilityServiceEnabled()) }
     var cameraGranted by remember { mutableStateOf(host.hasCameraPermission()) }
     dev.dogsc.app.ui.OnAppForeground {
@@ -113,7 +117,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                     SegmentedControl(
                         options = listOf("30 FPS", "60 FPS"),
                         selectedIndex = if (options.frameRate == 30) 0 else 1,
-                        onSelect = { options = options.copy(frameRate = if (it == 0) 30 else 60) },
+                        onSelect = { applyOptions(options.copy(frameRate = if (it == 0) 30 else 60)) },
                         compact = true,
                     )
                 }
@@ -133,14 +137,14 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                     },
                     checked = options.systemAudio && platform.supportsSystemAudio,
                     enabled = platform.supportsSystemAudio,
-                    onCheckedChange = { options = options.copy(systemAudio = it) },
+                    onCheckedChange = { applyOptions(options.copy(systemAudio = it)) },
                     leading = { Icon(Icons.Outlined.GraphicEq, null, tint = DogScColors.SecondaryText) },
                 )
                 ToggleRow(
                     title = "麦克风",
                     subtitle = "独立录制人声，编辑时可单独调节音量",
                     checked = options.microphone,
-                    onCheckedChange = { options = options.copy(microphone = it) },
+                    onCheckedChange = { applyOptions(options.copy(microphone = it)) },
                     leading = { Icon(Icons.Outlined.Mic, null, tint = DogScColors.SecondaryText) },
                 )
             }
@@ -156,7 +160,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                     checked = options.camera,
                     enabled = platform.supportsCamera,
                     onCheckedChange = {
-                        options = options.copy(camera = it)
+                        applyOptions(options.copy(camera = it))
                         if (it) host.requestCameraPermission()
                     },
                     leading = { Icon(Icons.Outlined.CameraAlt, null, tint = DogScColors.SecondaryText) },
@@ -171,7 +175,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                         SegmentedControl(
                             options = listOf("后置", "前置"),
                             selectedIndex = if (options.cameraLensFacing == 1) 1 else 0,
-                            onSelect = { options = options.copy(cameraLensFacing = if (it == 0) 0 else 1) },
+                            onSelect = { applyOptions(options.copy(cameraLensFacing = if (it == 0) 0 else 1)) },
                             compact = true,
                         )
                     }
@@ -226,7 +230,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                         if (enabled && !accessibilityEnabled) {
                             host.openAccessibilitySettings()
                         } else {
-                            options = options.copy(touchCapture = enabled)
+                            applyOptions(options.copy(touchCapture = enabled))
                         }
                     },
                     leading = { Icon(Icons.Outlined.TouchApp, null, tint = DogScColors.SecondaryText) },
@@ -283,7 +287,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
             onClick = {
                 accessibilityEnabled = host.isAccessibilityServiceEnabled()
                 state.updateRecordingDefaults { options.copy(touchCapture = options.touchCapture && accessibilityEnabled) }
-                host.startRecording(state.recordingOptions)
+                host.startRecording(options)
             },
             icon = Icons.Outlined.Videocam,
             variant = PillVariant.Primary,
