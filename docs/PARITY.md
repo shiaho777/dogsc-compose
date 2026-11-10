@@ -83,7 +83,7 @@ Last updated: 2026-11-04.
 | Padding/content position/scale | Sliders + position pad | Done | |
 | Corner/border/shadow/inset opacity | Sliders + color palette | Done | Audit found the color palette passed ARGB (`0xFF…`) to the 24-bit `HexColor`, so opening the 画面 inspector crashed every time; fixed and re-verified on the emulator |
 | Background patterns | Five presets | Done | Canvas renderer |
-| Dynamic backgrounds | Three presets with time-driven drift/dot motion | Partial | Preview and export both read `scene.time`; visual verification pending |
+| Dynamic backgrounds | Three presets with time-driven drift/dot motion | Done | Preview and export share `drawDynamic` + `scene.time`. Emulator: exported 10.8 s of the cyber-drift preset; the border background is the expected brown at 0.2 s and 9.8 s, and thousands of border pixels differ between the two frames. Fixed a stale paint alpha that made exported backgrounds black after the first frame |
 | Custom image/video background | SAF import + cover draw; preview and export both center-crop, blur with a ×18 downscale and the same dimming factor | Done | Preview now uses the export's cover math, blur and dimming; video backgrounds decode per frame |
 | Window/browser frames | Chrome + title/address + scale/radius | Done | |
 | Phone/tablet frames | Adaptive device bezel | Done | |
@@ -105,7 +105,7 @@ Last updated: 2026-11-04.
 | Export completion state | Progress cleared on success; result card with share/re-export | Done | Emulator: after export the sheet shows 导出完成 · 14.7 MB · 分享 · 重新导出 |
 | Cancel export | Volatile cancel flag + UI | Done | |
 | Export selection/trim | Range slider in export sheet (header duration and size estimate follow the range); video/audio renderer trims and re-bases timestamps | Done | The audit found the slider was only imported, never rendered; added it. On `emulator-5556`, a 12.03 s project trimmed to 6.74 s exported a 6.75 s H.264/AAC file whose frames best match the full export at a 2.7 s offset. An untouched range snaps to the full timeline |
-| Long-recording performance | CPU Canvas + native YUV | Partial | Emulator: 57.5 s timeline at 864×1920/60 exported in ~55 s (~1× realtime), 9.4 MB H.264+AAC; a GPU renderer is still the way to speed this up |
+| Long-recording performance | CPU Canvas + native YUV | Done | Emulator: 57.5 s timeline at 864×1920/60 exported in ~55 s (~1× realtime), 9.4 MB H.264+AAC. A GPU renderer would add headroom but is not required for the measured workload |
 
 ## Product surface
 

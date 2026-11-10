@@ -84,6 +84,12 @@ class CanvasFrameRenderer(
     }
 
     private fun drawBackground(scene: FrameScene, bitmap: Bitmap?) {
+        // Earlier layers (shadows, borders) reuse this paint with a reduced alpha. A shader
+        // inherits the paint alpha, so a stale shadow alpha would dim the whole background.
+        fill.alpha = 255
+        fill.color = Color.BLACK
+        fill.shader = null
+        fill.maskFilter = null
         when (val source = scene.background.source) {
             is BackgroundSource.Pattern -> drawPattern(source.preset, scene)
             is BackgroundSource.DynamicFlow -> drawDynamic(source.preset, scene)

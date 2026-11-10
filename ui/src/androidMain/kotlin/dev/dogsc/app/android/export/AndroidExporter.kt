@@ -161,9 +161,9 @@ class AndroidExporter(
                     return@withContext ExportResult.Success(request.outputUri, tempAudio.length())
                 }
 
-                Log.d("DogSCExport", "video start ${outputWidth}x${outputHeight} range=$trimStart..$trimEnd duration=$exportDuration")
                 onProgress(ExportProgress(0.02f, "正在准备素材"))
                 val frameRate = project.exportSettings.frameRate.value
+                Log.d("DogSCExport", "video start ${outputWidth}x${outputHeight} range=$trimStart..$trimEnd duration=$exportDuration")
                 val encoder = CanvasVideoEncoder(
                     outputWidth,
                     outputHeight,
