@@ -82,7 +82,6 @@ class AndroidDogScHost(
 
     override fun setRecordingCamera(enabled: Boolean) = recorder.setCameraEnabled(enabled)
 
-    override fun flipRecordingCamera() = recorder.flipCamera()
 
     override fun discardRecording() = recorder.discard()
 

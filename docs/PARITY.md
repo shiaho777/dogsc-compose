@@ -143,6 +143,6 @@ Last updated: 2026-11-04.
 ## Remaining gaps
 
 1. GPU preview/export renderer; profile multi-hour exports (57.5 s measured at ~1× realtime on the emulator).
-2. Physical-device camera verification, lens flip and camera motion on real hardware (the emulator exposes one virtual lens).
+2. Physical-device camera verification and lens selection on real hardware (the setup screen selects the lens before capture; the emulator currently exposes one virtual lens).
 3. Continuous touch motion requires Android 14+; older versions use click/scroll anchors (documented in DECISIONS).
 4. Upstream `.dogsc` package import; iOS/desktop/web targets are outside this Android-first round.

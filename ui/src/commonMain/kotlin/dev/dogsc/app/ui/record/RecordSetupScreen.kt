@@ -299,16 +299,6 @@ fun RecordingScreen(state: DogScAppState, host: DogScHost) {
                     onCheckedChange = { host.setRecordingCamera(it) },
                     leading = { Icon(Icons.Outlined.CameraAlt, null, tint = DogScColors.SecondaryText) },
                 )
-                if (recorder.cameraEnabled) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(start = 38.dp, bottom = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("切换镜头", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.weight(1f))
-                        PillButton("翻转", onClick = { host.flipRecordingCamera() }, variant = PillVariant.Ghost, compact = true)
-                    }
-                }
             }
         }
         Spacer(Modifier.height(14.dp))

@@ -35,7 +35,6 @@ interface DogScHost {
     fun addRecordingMarker()
     fun setRecordingMicrophone(enabled: Boolean)
     fun setRecordingCamera(enabled: Boolean)
-    fun flipRecordingCamera()
     fun discardRecording()
     fun isAccessibilityServiceEnabled(): Boolean
     fun openAppSettings()

@@ -199,12 +199,6 @@ class AndroidRecorderManager(
         mutableState.value = mutableState.value.copy(cameraEnabled = enabled)
     }
 
-    fun flipCamera() {
-        if (mutableState.value.isActive) {
-            mutableState.value = mutableState.value.copy(error = "录制中暂不支持切换镜头")
-        }
-    }
-
     fun discard() {
         coordinator?.discard()
         coordinator = null

@@ -64,3 +64,7 @@ Android gives an app no chance to finalize a file when the process is killed, an
 ## 14. Edge sliders opt out of system back gestures
 
 Full-width sliders put their thumbs inside Android's gesture-navigation edge zone, so dragging a thumb at either end was read as "back" and closed the sheet. `excludeSystemGestures()` (an expect/actual modifier; no-op on platforms without edge gestures) is applied to shared sliders and the export range slider, so drags behave like upstream's pointer drags.
+
+## 15. Camera lens is chosen before recording
+
+Android's CameraX binds one `VideoCapture` to one lens for the lifetime of a recording session; switching lenses means stopping and restarting the camera track, which would leave a gap and require a second join at finalize. The setup screen therefore exposes the lens (front/back) before capture starts, matching upstream's camera-device picker. The active-recording screen does not offer a flip control that would only fail: the lens stays fixed until the recording ends, and a new recording can choose the other lens. This keeps the control honest instead of presenting a dead button.
