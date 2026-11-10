@@ -2,6 +2,8 @@ package dev.dogsc.app.android
 
 import android.content.Context
 import android.net.Uri
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -31,6 +33,14 @@ class AndroidPreviewAudio(
         val (items, planSlices) = prepared
         val exo = player ?: ExoPlayer.Builder(context).build().also { created ->
             player = created
+            created.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true,
+            )
+            created.setHandleAudioBecomingNoisy(true)
             created.addListener(object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     val index = created.currentMediaItemIndex

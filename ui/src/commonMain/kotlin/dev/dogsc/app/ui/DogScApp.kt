@@ -62,11 +62,15 @@ fun DogScApp(host: DogScHost) {
     }
 
     LaunchedEffect(recorder.isActive) {
+        host.keepScreenOn(recorder.isActive)
         if (recorder.isActive) {
             state.enterRecording()
         } else {
             state.leaveRecording()
         }
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { host.keepScreenOn(false) }
     }
     LaunchedEffect(recorder.error) {
         recorder.error?.let { state.showToast(it, isError = true) }
@@ -88,7 +92,10 @@ fun DogScApp(host: DogScHost) {
         state.openLibrary()
     }
 
-    OnAppBackground { state.flushPendingSave() }
+    OnAppBackground {
+        state.stopPlayback()
+        state.flushPendingSave()
+    }
 
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
     val darkTheme = when (state.appearance) {

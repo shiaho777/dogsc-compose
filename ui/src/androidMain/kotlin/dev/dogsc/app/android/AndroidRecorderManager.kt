@@ -8,6 +8,7 @@ import android.hardware.display.DisplayManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.StatFs
 import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
@@ -73,6 +74,11 @@ class AndroidRecorderManager(
     fun start(options: RecordingOptions) {
         Log.d("DogScRecording", "start requested $options")
         if (mutableState.value.isActive) return
+        val freeBytes = runCatching { StatFs(activity.filesDir.path).availableBytes }.getOrDefault(Long.MAX_VALUE)
+        if (freeBytes < 256L * 1024 * 1024) {
+            fail("存储空间不足，至少需要 256 MB")
+            return
+        }
         pendingOptions = options
         pendingOptionsStatic = options
         Log.d("DogScRecording", "permissions required for $options")

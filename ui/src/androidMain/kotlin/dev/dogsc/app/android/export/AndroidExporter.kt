@@ -10,6 +10,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
+import android.os.StatFs
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
@@ -164,6 +165,13 @@ class AndroidExporter(
 
                 onProgress(ExportProgress(0.02f, "正在准备素材"))
                 val frameRate = project.exportSettings.frameRate.value
+                val requiredBytes = ExportEncodingPolicy.videoBitrate(outputWidth, outputHeight, frameRate)
+                    .toLong() / 8L * exportDuration.toLong().coerceAtLeast(1L) + 32L * 1024 * 1024
+                val freeBytes = runCatching { StatFs(context.cacheDir.path).availableBytes }
+                    .getOrDefault(Long.MAX_VALUE)
+                if (freeBytes < requiredBytes) {
+                    return@withContext ExportResult.Failure("存储空间不足，请清理后重试")
+                }
                 Log.d("DogSCExport", "video start ${outputWidth}x${outputHeight} range=$trimStart..$trimEnd duration=$exportDuration")
                 val encoder = CanvasVideoEncoder(
                     outputWidth,

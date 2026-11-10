@@ -612,6 +612,8 @@ object Loc {
         "管理" to "Manage",
         "可用" to "Available",
         "不可用" to "Unavailable",
+        "存储空间不足，请清理后重试" to "Not enough storage — free some space and try again",
+        "存储空间不足，至少需要 256 MB" to "Not enough storage — at least 256 MB is required",
         "正在清空回收站" to "Emptying trash",
         "清空失败" to "Empty trash failed",
         "回收站已清空" to "Trash emptied",

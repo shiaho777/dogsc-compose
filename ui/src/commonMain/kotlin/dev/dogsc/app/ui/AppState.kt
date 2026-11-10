@@ -554,7 +554,9 @@ class DogScAppState(
                 current.markSaved()
                 sessionRevision++
             }
-            refreshProjects()
+            // While editing, a library refresh would probe every project's media again.
+            // The library is refreshed when the editor closes (openLibrary).
+            if (screen == AppScreen.Library) refreshProjects()
             if (showConfirmation) showToast("项目已保存")
         } else {
             showToast("保存失败，请检查存储空间", isError = true)
