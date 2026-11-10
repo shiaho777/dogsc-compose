@@ -50,6 +50,8 @@ class AndroidDogScPlatform(
 
     override suspend fun restoreProject(id: String): Boolean = repository.restoreProject(id)
 
+    override suspend fun clearTrash(): Boolean = repository.clearTrash()
+
     override suspend fun duplicateProject(id: String): Boolean = repository.duplicateProject(id)
 
     override suspend fun renameProject(id: String, title: String): Boolean = repository.renameProject(id, title)

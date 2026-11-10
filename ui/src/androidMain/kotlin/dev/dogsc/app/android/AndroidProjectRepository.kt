@@ -16,6 +16,7 @@ import dev.dogsc.app.platform.LoadedProject
 import dev.dogsc.app.platform.MediaProbe
 import dev.dogsc.app.platform.ProjectSummary
 import dev.dogsc.app.platform.ScenePreset
+import dev.dogsc.app.ui.Loc
 import dev.dogsc.core.model.CaptureConfiguration
 import dev.dogsc.core.model.CaptureSource
 import dev.dogsc.core.model.PointerEventKind
@@ -61,7 +62,7 @@ class AndroidProjectRepository(private val context: Context) {
         if (!manifest.exists()) return@withContext null
         val decoded = runCatching { ProjectCodec.decode(manifest.readText()) }.getOrNull() ?: return@withContext null
         val project = if (decoded.title.all { it.isDigit() } && decoded.title.isNotBlank()) {
-            decoded.copy(title = "导入的视频")
+            decoded.copy(title = Loc.t("导入的视频"))
         } else decoded
         val summary = loadSummary(dir) ?: return@withContext null
         val duration = probe(File(dir, project.media?.screen?.relativePath ?: ""))?.durationSeconds ?: 0.0
@@ -107,6 +108,11 @@ class AndroidProjectRepository(private val context: Context) {
             ?: emptyList()
     }
 
+    suspend fun clearTrash(): Boolean = withContext(Dispatchers.IO) {
+        trashDir.listFiles()?.forEach { it.deleteRecursively() }
+        trashDir.listFiles()?.isEmpty() != false
+    }
+
     suspend fun restoreProject(id: String): Boolean = withContext(Dispatchers.IO) {
         val source = trashDir.listFiles()
             ?.firstOrNull { it.isDirectory && it.name.startsWith("$id-") }
@@ -125,7 +131,7 @@ class AndroidProjectRepository(private val context: Context) {
         source.copyRecursively(target, overwrite = false)
         val newProject = loaded.project.copy(
             id = newId,
-            title = "${loaded.project.title} 副本",
+            title = "${loaded.project.title} ${Loc.t("副本")}",
             createdAtEpochMs = System.currentTimeMillis(),
         )
         val manifest = File(target, "project.json")
@@ -151,9 +157,9 @@ class AndroidProjectRepository(private val context: Context) {
                 dir.deleteRecursively()
                 return@withContext null
             }
-            val displayName = queryDisplayName(Uri.parse(uri)) ?: "导入的视频"
-            val rawTitle = displayName.substringBeforeLast('.').ifBlank { "导入的视频" }
-            val title = if (rawTitle.all { it.isDigit() } || rawTitle.length > 60) "导入的视频" else rawTitle
+            val displayName = queryDisplayName(Uri.parse(uri)) ?: Loc.t("导入的视频")
+            val rawTitle = displayName.substringBeforeLast('.').ifBlank { Loc.t("导入的视频") }
+            val title = if (rawTitle.all { it.isDigit() } || rawTitle.length > 60) Loc.t("导入的视频") else rawTitle
             val project = RecorderProject(
                 id = id,
                 title = title,
@@ -338,7 +344,7 @@ class AndroidProjectRepository(private val context: Context) {
         if (!manifest.exists()) return null
         val decoded = runCatching { ProjectCodec.decode(manifest.readText()) }.getOrNull() ?: return null
         val project = if (decoded.title.all { it.isDigit() } && decoded.title.isNotBlank()) {
-            decoded.copy(title = "导入的视频")
+            decoded.copy(title = Loc.t("导入的视频"))
         } else decoded
         if (AndroidRecorderManager.activeProjectId != project.id) {
             recoverInterruptedMedia(dir, project)

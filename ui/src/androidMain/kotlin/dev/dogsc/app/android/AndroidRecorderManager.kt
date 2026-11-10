@@ -20,6 +20,7 @@ import dev.dogsc.app.android.recording.CameraRecorder
 import dev.dogsc.app.android.recording.ScreenRecorder
 import dev.dogsc.app.platform.RecorderUiState
 import dev.dogsc.app.platform.RecordingOptions
+import dev.dogsc.app.ui.Loc
 import dev.dogsc.core.model.CameraLayoutMode
 import dev.dogsc.core.model.CameraMotionClip
 import dev.dogsc.core.model.CameraMotionState
@@ -287,7 +288,8 @@ internal class RecordingCoordinator(
     private var cameraRunning = false
     private var stopping = false
     private var rawDuration = 0.0
-    private val projectTitle = "录制 " + SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
+    private val projectTitle = Loc.t("录制") + " " +
+        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
 
     fun start() {
         AndroidRecorderManager.activeProjectId = projectId

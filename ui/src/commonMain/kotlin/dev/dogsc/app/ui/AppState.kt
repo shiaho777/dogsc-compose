@@ -304,6 +304,17 @@ class DogScAppState(
         }
     }
 
+    fun clearTrash() {
+        scope.launch {
+            isBusy = true
+            busyMessage = "正在清空回收站"
+            val cleared = platform.clearTrash()
+            isBusy = false
+            refreshProjects()
+            if (cleared) showToast("回收站已清空") else showToast("清空失败", isError = true)
+        }
+    }
+
     fun finishOnboarding() {
         platform.markOnboardingSeen()
         showOnboarding = false
@@ -1084,6 +1095,19 @@ class DogScAppState(
                 showToast("已创建副本")
             } else {
                 showToast("复制失败", isError = true)
+            }
+        }
+    }
+
+    fun renameProject(summary: ProjectSummary, title: String) {
+        val clean = title.trim().take(200)
+        if (clean.isBlank() || clean == summary.title) return
+        scope.launch {
+            if (platform.renameProject(summary.id, clean)) {
+                refreshProjects()
+                showToast("项目已重命名")
+            } else {
+                showToast("重命名失败", isError = true)
             }
         }
     }

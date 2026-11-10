@@ -28,7 +28,9 @@ import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.ScreenShare
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import dev.dogsc.app.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -62,6 +64,7 @@ import org.jetbrains.compose.resources.painterResource
 fun SettingsScreen(state: DogScAppState, host: DogScHost) {
     val platform = host.platform
     var accessibilityEnabled by remember { mutableStateOf(host.isAccessibilityServiceEnabled()) }
+    var showClearTrashDialog by remember { mutableStateOf(false) }
     dev.dogsc.app.ui.OnAppForeground { accessibilityEnabled = host.isAccessibilityServiceEnabled() }
     Column(
         Modifier
@@ -270,6 +273,15 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 } else {
+                    if (state.trashedProjects.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        PillButton(
+                            "清空回收站",
+                            onClick = { showClearTrashDialog = true },
+                            variant = PillVariant.Ghost,
+                            compact = true,
+                        )
+                    }
                     state.trashedProjects.forEach { summary ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Outlined.Restore, null, tint = DogScColors.SecondaryText)
@@ -328,6 +340,29 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(30.dp))
+    }
+    if (showClearTrashDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearTrashDialog = false },
+            containerColor = DogScColors.Panel,
+            title = { Text("清空回收站") },
+            text = { Text("永久删除回收站中的所有项目？此操作无法撤销。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearTrashDialog = false
+                        state.clearTrash()
+                    },
+                ) {
+                    Text("清空", color = DogScColors.Danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearTrashDialog = false }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 

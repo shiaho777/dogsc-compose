@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.OpenInNew
@@ -37,6 +38,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import dev.dogsc.app.ui.components.Text
 import androidx.compose.runtime.Composable
@@ -83,6 +85,8 @@ fun LibraryScreen(
     onStartRecording: () -> Unit,
 ) {
     var deleteTarget by remember { mutableStateOf<ProjectSummary?>(null) }
+    var renameTarget by remember { mutableStateOf<ProjectSummary?>(null) }
+    var renameText by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -183,6 +187,10 @@ fun LibraryScreen(
                         host = host,
                         onOpen = { state.openProject(project) },
                         onDelete = { deleteTarget = project },
+                        onRename = {
+                            renameTarget = project
+                            renameText = project.title
+                        },
                         onDuplicate = { state.duplicateProject(project) },
                     )
                 }
@@ -212,6 +220,38 @@ fun LibraryScreen(
             },
         )
     }
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            containerColor = DogScColors.Panel,
+            title = { Text("重命名项目") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it.take(200) },
+                    singleLine = true,
+                    label = { Text("项目名称") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val title = renameText
+                        renameTarget = null
+                        state.renameProject(target, title)
+                    },
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -220,6 +260,7 @@ private fun ProjectCard(
     host: DogScHost,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onRename: () -> Unit,
     onDuplicate: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -312,6 +353,11 @@ private fun ProjectCard(
                             text = { Text("打开") },
                             leadingIcon = { Icon(Icons.Outlined.OpenInNew, null) },
                             onClick = { menuOpen = false; onOpen() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("重命名") },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                            onClick = { menuOpen = false; onRename() },
                         )
                         DropdownMenuItem(
                             text = { Text("创建副本") },

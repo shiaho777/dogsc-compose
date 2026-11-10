@@ -103,6 +103,7 @@ interface DogScPlatform {
     suspend fun deleteProject(id: String): Boolean
     suspend fun loadTrash(): List<ProjectSummary> = emptyList()
     suspend fun restoreProject(id: String): Boolean = false
+    suspend fun clearTrash(): Boolean = false
     suspend fun duplicateProject(id: String): Boolean
     suspend fun renameProject(id: String, title: String): Boolean
 
