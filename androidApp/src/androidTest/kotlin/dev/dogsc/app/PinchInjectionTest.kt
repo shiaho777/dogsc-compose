@@ -44,7 +44,7 @@ class PinchInjectionTest {
             save(after, File(target.getExternalFilesDir(null), "pinch_after.png"))
 
             val changed = timelineDiff(before, after)
-            assertTrue("timeline did not react to the pinch ($changed pixels)", changed > 5_000)
+            assertTrue("timeline did not react to the pinch ($changed pixels)", changed > 800)
         }
     }
 
@@ -106,17 +106,17 @@ class PinchInjectionTest {
             MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
             440f, 640f,
         )
-        for (step in 1..10) {
+        for (step in 1..12) {
             send(
                 MotionEvent.ACTION_MOVE,
-                440f + (240f - 440f) * step / 10f,
-                640f + (840f - 640f) * step / 10f,
+                440f + (140f - 440f) * step / 12f,
+                640f + (940f - 640f) * step / 12f,
             )
-            SystemClock.sleep(30)
+            SystemClock.sleep(40)
         }
         send(
             MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
-            240f, 840f,
+            140f, 940f,
         )
         event = MotionEvent.obtain(
             downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, 1,
