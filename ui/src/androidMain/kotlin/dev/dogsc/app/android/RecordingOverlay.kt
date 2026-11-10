@@ -12,6 +12,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import dev.dogsc.app.ui.Loc
 import kotlin.math.roundToInt
 
 /**
@@ -56,32 +57,32 @@ internal class RecordingOverlay(
             textSize = 14f
             setPadding(dp(6), 0, dp(10), 0)
         }
-        pauseView = action("暂停") {
+        pauseView = action(Loc.t("暂停")) {
             if (coordinator.isPaused()) {
                 coordinator.resume()
             } else {
                 coordinator.pause()
             }
         }
-        markerView = action("标记") { coordinator.addMarker() }
-        micView = action("麦克风") {
+        markerView = action(Loc.t("标记")) { coordinator.addMarker() }
+        micView = action(Loc.t("麦克风")) {
             val next = !coordinator.microphoneEnabled()
             AndroidRecorderManager.instance?.setMicrophoneEnabled(next)
         }
-        cameraView = action("摄像头") {
+        cameraView = action(Loc.t("摄像头")) {
             val next = !coordinator.cameraEnabled()
             AndroidRecorderManager.instance?.setCameraEnabled(next)
         }
-        val memoButton = action("备忘") { toggleMemo() }
-        val stop = action("停止") { coordinator.stop() }.apply {
+        val memoButton = action(Loc.t("备忘")) { toggleMemo() }
+        val stop = action(Loc.t("停止")) { coordinator.stop() }.apply {
             setTextColor(Color.rgb(255, 120, 112))
         }
         container.addView(dot)
         container.addView(timerView)
         container.addView(pauseView)
         container.addView(markerView)
-        container.addView(micView)
-        container.addView(cameraView)
+        if (coordinator.microphoneAvailable()) container.addView(micView)
+        if (coordinator.cameraAvailable()) container.addView(cameraView)
         if (memoText.isNotBlank()) container.addView(memoButton)
         container.addView(stop)
         val params = WindowManager.LayoutParams(
@@ -182,7 +183,7 @@ internal class RecordingOverlay(
     }
 
     fun setPaused(paused: Boolean) {
-        pauseView?.text = if (paused) "继续" else "暂停"
+        pauseView?.text = Loc.t(if (paused) "继续" else "暂停")
     }
 
     fun updateTime(seconds: Double) {

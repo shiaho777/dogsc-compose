@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import dev.dogsc.app.ui.Loc
 import kotlin.math.roundToInt
 
 class RecordingService : Service() {
@@ -64,10 +65,10 @@ class RecordingService : Service() {
             val manager = getSystemService(NotificationManager::class.java)
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "录制",
+                Loc.t("录制"),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "屏幕录制状态与控制"
+                description = Loc.t("屏幕录制状态与控制")
                 setShowBadge(false)
             }
             manager.createNotificationChannel(channel)
@@ -86,15 +87,15 @@ class RecordingService : Service() {
             )
         }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(if (paused) "DogSC 已暂停 · $time" else "DogSC 正在录制 · $time")
-            .setContentText(if (markers > 0) "已添加 $markers 个标记" else "点击回到 DogSC 查看录制状态")
+            .setContentTitle(if (paused) "${Loc.t("DogSC 已暂停")} · $time" else "${Loc.t("DogSC 正在录制")} · $time")
+            .setContentText(if (markers > 0) Loc.t("已添加 $markers 个标记") else Loc.t("点击回到 DogSC 查看录制状态"))
             .setSmallIcon(android.R.drawable.presence_video_online)
             .setOngoing(true)
             .setContentIntent(launch)
             .setOnlyAlertOnce(true)
-            .addAction(0, if (paused) "继续" else "暂停", servicePending(if (paused) ACTION_RESUME else ACTION_PAUSE))
-            .addAction(0, "标记", servicePending(ACTION_MARKER))
-            .addAction(0, "停止", servicePending(ACTION_STOP))
+            .addAction(0, Loc.t(if (paused) "继续" else "暂停"), servicePending(if (paused) ACTION_RESUME else ACTION_PAUSE))
+            .addAction(0, Loc.t("标记"), servicePending(ACTION_MARKER))
+            .addAction(0, Loc.t("停止"), servicePending(ACTION_STOP))
         return builder.build()
     }
 
@@ -127,15 +128,15 @@ class RecordingService : Service() {
                 )
             }
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                .setContentTitle(if (paused) "DogSC 已暂停 · $time" else "DogSC 正在录制 · $time")
-                .setContentText(if (markers > 0) "已添加 $markers 个标记" else "点击回到 DogSC 查看录制状态")
+                .setContentTitle(if (paused) "${Loc.t("DogSC 已暂停")} · $time" else "${Loc.t("DogSC 正在录制")} · $time")
+                .setContentText(if (markers > 0) Loc.t("已添加 $markers 个标记") else Loc.t("点击回到 DogSC 查看录制状态"))
                 .setSmallIcon(android.R.drawable.presence_video_online)
                 .setOngoing(true)
                 .setContentIntent(launch)
                 .setOnlyAlertOnce(true)
-                .addAction(0, if (paused) "继续" else "暂停", pending(context, if (paused) ACTION_RESUME else ACTION_PAUSE))
-                .addAction(0, "标记", pending(context, ACTION_MARKER))
-                .addAction(0, "停止", pending(context, ACTION_STOP))
+                .addAction(0, Loc.t(if (paused) "继续" else "暂停"), pending(context, if (paused) ACTION_RESUME else ACTION_PAUSE))
+                .addAction(0, Loc.t("标记"), pending(context, ACTION_MARKER))
+                .addAction(0, Loc.t("停止"), pending(context, ACTION_STOP))
                 .build()
             manager.notify(NOTIFICATION_ID, notification)
         }

@@ -9,7 +9,9 @@ data class RecorderUiState(
     val elapsedSeconds: Double = 0.0,
     val markerCount: Int = 0,
     val microphoneEnabled: Boolean = false,
+    val microphoneAvailable: Boolean = false,
     val cameraEnabled: Boolean = false,
+    val cameraAvailable: Boolean = false,
     val systemAudioEnabled: Boolean = true,
     val cameraLensFacing: Int = 1,
     val error: String? = null,
@@ -24,6 +26,9 @@ data class RecorderUiState(
 interface DogScHost {
     val platform: DogScPlatform
     val recorderState: StateFlow<RecorderUiState>
+
+    fun hasCameraPermission(): Boolean = true
+    fun requestCameraPermission() {}
 
     fun pickVideo(onResult: (String?) -> Unit)
     fun pickImage(onResult: (String?) -> Unit)

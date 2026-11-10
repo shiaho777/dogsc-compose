@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
+import dev.dogsc.app.android.AndroidDogScHost
 import dev.dogsc.app.android.AndroidRecorderManager
 import dev.dogsc.app.android.DogScAndroidApp
 
@@ -32,6 +33,10 @@ class MainActivity : ComponentActivity() {
         permissions: Array<String>,
         grantResults: IntArray,
     ) {
+        if (requestCode == AndroidDogScHost.REQUEST_CAMERA_PREVIEW) {
+            // The setup screen re-checks the grant on resume and starts the preview.
+            return
+        }
         if (requestCode == AndroidRecorderManager.REQUEST_PERMISSIONS) {
             val result = permissions.indices.associate { index ->
                 permissions[index] to (grantResults.getOrNull(index) == android.content.pm.PackageManager.PERMISSION_GRANTED)

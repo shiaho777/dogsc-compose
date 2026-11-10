@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">DogSC touch capture</string>
+    <string name="accessibility_description">Records click and scroll positions to build an editable cursor path and automatic camera motion while editing. DogSC never reads screen text or input content.</string>
+</resources>

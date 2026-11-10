@@ -56,7 +56,11 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
     val platform = host.platform
     var options by remember { mutableStateOf(state.recordingOptions) }
     var accessibilityEnabled by remember { mutableStateOf(host.isAccessibilityServiceEnabled()) }
-    dev.dogsc.app.ui.OnAppForeground { accessibilityEnabled = host.isAccessibilityServiceEnabled() }
+    var cameraGranted by remember { mutableStateOf(host.hasCameraPermission()) }
+    dev.dogsc.app.ui.OnAppForeground {
+        accessibilityEnabled = host.isAccessibilityServiceEnabled()
+        cameraGranted = host.hasCameraPermission()
+    }
 
     Column(
         modifier = Modifier
@@ -151,7 +155,10 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                     subtitle = "单独录制摄像头，剪辑时调整位置、形状与出场",
                     checked = options.camera,
                     enabled = platform.supportsCamera,
-                    onCheckedChange = { options = options.copy(camera = it) },
+                    onCheckedChange = {
+                        options = options.copy(camera = it)
+                        if (it) host.requestCameraPermission()
+                    },
                     leading = { Icon(Icons.Outlined.CameraAlt, null, tint = DogScColors.SecondaryText) },
                 )
                 if (options.camera) {
@@ -167,6 +174,43 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                             onSelect = { options = options.copy(cameraLensFacing = if (it == 0) 0 else 1) },
                             compact = true,
                         )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (cameraGranted) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(DogScColors.Raised),
+                        ) {
+                            CameraSetupPreview(
+                                lensFacing = options.cameraLensFacing,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    } else {
+                        SoftCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+                            Row(
+                                Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Outlined.CameraAlt, null, tint = DogScColors.SecondaryText)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "允许相机权限以预览取景",
+                                    color = DogScColors.SecondaryText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                PillButton(
+                                    "授权",
+                                    onClick = { host.requestCameraPermission() },
+                                    variant = PillVariant.Ghost,
+                                    compact = true,
+                                )
+                            }
+                        }
                     }
                 }
                 ToggleRow(
@@ -289,13 +333,17 @@ fun RecordingScreen(state: DogScAppState, host: DogScHost) {
             Column(Modifier.padding(18.dp)) {
                 ToggleRow(
                     title = "麦克风",
+                    subtitle = if (!recorder.microphoneAvailable) "本次录制未启用麦克风" else null,
                     checked = recorder.microphoneEnabled,
+                    enabled = recorder.microphoneAvailable,
                     onCheckedChange = { host.setRecordingMicrophone(it) },
                     leading = { Icon(Icons.Outlined.Mic, null, tint = DogScColors.SecondaryText) },
                 )
                 ToggleRow(
                     title = "摄像头",
+                    subtitle = if (!recorder.cameraAvailable) "本次录制未启用摄像头" else null,
                     checked = recorder.cameraEnabled,
+                    enabled = recorder.cameraAvailable,
                     onCheckedChange = { host.setRecordingCamera(it) },
                     leading = { Icon(Icons.Outlined.CameraAlt, null, tint = DogScColors.SecondaryText) },
                 )

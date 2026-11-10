@@ -130,7 +130,9 @@ class AndroidRecorderManager(
                 isActive = true,
                 isRecording = true,
                 microphoneEnabled = options.microphone,
+                microphoneAvailable = options.microphone,
                 cameraEnabled = options.camera,
+                cameraAvailable = options.camera,
                 systemAudioEnabled = options.systemAudio,
                 cameraLensFacing = options.cameraLensFacing,
             )
@@ -358,8 +360,10 @@ internal class RecordingCoordinator(
                         isPaused = pausedAt != null,
                         elapsedSeconds = elapsed,
                         markerCount = markers.size,
-                        microphoneEnabled = micRecorder != null,
+                        microphoneEnabled = micRecorder != null && micRecorder?.muted == false,
+                        microphoneAvailable = micRecorder != null,
                         cameraEnabled = cameraRunning,
+                        cameraAvailable = cameraRunning,
                         systemAudioEnabled = systemRecorder != null,
                         cameraLensFacing = options.cameraLensFacing,
                     )
@@ -441,7 +445,9 @@ internal class RecordingCoordinator(
 
     fun isPaused(): Boolean = pausedAt != null
     fun microphoneEnabled(): Boolean = micRecorder != null && micRecorder?.muted == false
+    fun microphoneAvailable(): Boolean = micRecorder != null
     fun cameraEnabled(): Boolean = cameraRunning
+    fun cameraAvailable(): Boolean = cameraRunning
     fun elapsedSecondsPublic(): Double = elapsedSeconds()
 
     fun discard() {

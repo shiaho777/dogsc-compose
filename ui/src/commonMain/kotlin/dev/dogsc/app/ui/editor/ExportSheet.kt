@@ -301,7 +301,14 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
                     PillButton(
                         "选择保存位置",
                         onClick = {
-                            host.createExportFile(fileName, audioOnly) { uri ->
+                            val base = fileName.trim()
+                                .removeSuffix(".mp4")
+                                .removeSuffix(".m4a")
+                                .replace(Regex("[\\\\/:*?\"<>|]"), "-")
+                                .take(60)
+                                .ifBlank { project.title.ifBlank { "DogSC" } }
+                            val name = base + if (audioOnly) ".m4a" else ".mp4"
+                            host.createExportFile(name, audioOnly) { uri ->
                                 if (uri != null) {
                                     state.updateExport("记录导出规格") {
                                         it.copy(

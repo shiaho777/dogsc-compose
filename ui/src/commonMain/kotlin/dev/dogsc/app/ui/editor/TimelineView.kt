@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -237,7 +238,26 @@ fun TimelinePanel(
 
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val viewportWidth = maxWidth - HeaderWidth
+            val density = LocalDensity.current
             val contentWidth = maxOf(viewportWidth, (state.outputDuration * state.timelinePixelsPerSecond).dp)
+            // Keep the playhead visible while playing without moving a user-parked timeline
+            // when playback is paused.
+            LaunchedEffect(state.isPlaying, state.playhead, state.timelinePixelsPerSecond) {
+                if (!state.isPlaying) return@LaunchedEffect
+                val playheadPx = with(density) {
+                    (state.playhead * state.timelinePixelsPerSecond).dp.toPx()
+                }
+                val viewportPx = with(density) { viewportWidth.toPx() }
+                val margin = viewportPx * 0.15f
+                val target = when {
+                    playheadPx < scroll.value + margin -> playheadPx - margin
+                    playheadPx > scroll.value + viewportPx - margin -> playheadPx - viewportPx + margin
+                    else -> null
+                }
+                if (target != null) {
+                    scroll.scrollTo(target.roundToInt().coerceIn(0, scroll.maxValue))
+                }
+            }
             LaunchedEffect(state.outputDuration) {
                 if (state.timelinePixelsPerSecond <= 4.1f && state.outputDuration > 0) {
                     state.timelinePixelsPerSecond = (viewportWidth.value / state.outputDuration.toFloat()).coerceIn(4f, 400f)

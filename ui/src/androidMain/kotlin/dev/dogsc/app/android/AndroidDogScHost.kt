@@ -1,10 +1,14 @@
 package dev.dogsc.app.android
 
+import android.Manifest
 import android.content.ComponentName
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import dev.dogsc.app.platform.DogScHost
 import dev.dogsc.app.platform.DogScPlatform
 import dev.dogsc.app.platform.RecorderUiState
@@ -19,12 +23,37 @@ class AndroidDogScHost(
     var launchPickVideo: (() -> Unit)? = null
     var launchPickImage: (() -> Unit)? = null
     var launchCreateDocument: ((fileName: String, mimeType: String) -> Unit)? = null
+    private var cameraPermissionRequested = false
 
     private var pendingPickVideo: ((String?) -> Unit)? = null
     private var pendingPickImage: ((String?) -> Unit)? = null
     private var pendingCreateDocument: ((String?) -> Unit)? = null
 
+    companion object {
+        const val REQUEST_CAMERA_PREVIEW = 9003
+    }
+
     override val recorderState: StateFlow<RecorderUiState> = recorder.state
+
+    override fun hasCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun requestCameraPermission() {
+        if (hasCameraPermission()) return
+        val permanentlyDenied = cameraPermissionRequested &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)
+        if (permanentlyDenied) {
+            platform.openAppSettings()
+            return
+        }
+        cameraPermissionRequested = true
+        ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(Manifest.permission.CAMERA),
+            REQUEST_CAMERA_PREVIEW,
+        )
+    }
 
     override fun pickVideo(onResult: (String?) -> Unit) {
         pendingPickVideo = onResult
@@ -112,7 +141,7 @@ class AndroidDogScHost(
             putExtra(Intent.EXTRA_STREAM, parsed)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        activity.startActivity(Intent.createChooser(intent, "分享成片"))
+        activity.startActivity(Intent.createChooser(intent, dev.dogsc.app.ui.Loc.t("分享成片")))
     }
 
     override fun keepScreenOn(enabled: Boolean) {

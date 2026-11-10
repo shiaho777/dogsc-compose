@@ -37,7 +37,7 @@
         <service
             android:name="dev.dogsc.app.android.DogScTouchAccessibilityService"
             android:exported="true"
-            android:label="DogSC 触控记录"
+            android:label="@string/accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

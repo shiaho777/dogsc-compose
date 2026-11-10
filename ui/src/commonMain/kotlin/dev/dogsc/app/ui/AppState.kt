@@ -1042,7 +1042,11 @@ class DogScAppState(
 
     fun deleteProject(summary: ProjectSummary) {
         scope.launch {
-            if (platform.deleteProject(summary.id)) {
+            isBusy = true
+            busyMessage = "正在删除项目"
+            val deleted = platform.deleteProject(summary.id)
+            isBusy = false
+            if (deleted) {
                 refreshProjects()
                 showToast("已移到废纸篓")
             } else {
@@ -1053,7 +1057,11 @@ class DogScAppState(
 
     fun duplicateProject(summary: ProjectSummary) {
         scope.launch {
-            if (platform.duplicateProject(summary.id)) {
+            isBusy = true
+            busyMessage = "正在复制项目"
+            val duplicated = platform.duplicateProject(summary.id)
+            isBusy = false
+            if (duplicated) {
                 refreshProjects()
                 showToast("已创建副本")
             } else {

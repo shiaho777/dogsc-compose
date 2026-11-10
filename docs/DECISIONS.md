@@ -68,3 +68,7 @@ Full-width sliders put their thumbs inside Android's gesture-navigation edge zon
 ## 15. Camera lens is chosen before recording
 
 Android's CameraX binds one `VideoCapture` to one lens for the lifetime of a recording session; switching lenses means stopping and restarting the camera track, which would leave a gap and require a second join at finalize. The setup screen therefore exposes the lens (front/back) before capture starts, matching upstream's camera-device picker. The active-recording screen does not offer a flip control that would only fail: the lens stays fixed until the recording ends, and a new recording can choose the other lens. This keeps the control honest instead of presenting a dead button.
+
+## 16. Camera framing is visible before capture
+
+The capture setup screen binds a CameraX `Preview` to the activity lifecycle, so the user can frame the shot before pressing Start. Only the Preview use case is unbound when the screen leaves; the recorder's `VideoCapture` binds independently, so the setup preview cannot tear down an active recording. Front-lens previews are mirrored on screen to match the default mirrored PiP. If camera permission is missing, the card offers a grant button; a permanently denied permission opens the app settings instead of silently doing nothing.
