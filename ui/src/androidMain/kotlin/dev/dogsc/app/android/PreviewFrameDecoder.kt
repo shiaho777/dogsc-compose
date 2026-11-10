@@ -21,6 +21,8 @@ class PreviewFrameDecoder {
         val decoder = VideoFrameSource(file)
         val buffers = arrayOfNulls<Bitmap>(2)
         var index = 0
+        var lastScaledTime = Double.NaN
+        var lastScaled: Bitmap? = null
     }
 
     private val sources = HashMap<String, Source>()
@@ -37,6 +39,10 @@ class PreviewFrameDecoder {
         val source = sources.getOrPut(file.absolutePath) { Source(file) }
         val full = runCatching { source.decoder.frameAt(time) }.getOrNull() ?: return null
         if (full.width <= 0 || full.height <= 0) return null
+        val frameTime = source.decoder.lastDecodedTime
+        if (frameTime == source.lastScaledTime) {
+            source.lastScaled?.takeIf { !it.isRecycled }?.let { return it }
+        }
         val scale = maxWidth.toFloat() / full.width
         val width = max(2, (full.width * scale).toInt())
         val height = max(2, (full.height * scale).toInt())
@@ -46,8 +52,14 @@ class PreviewFrameDecoder {
         dst.set(0, 0, width, height)
         Canvas(target).drawBitmap(full, null, dst, paint)
         source.index++
+        source.lastScaledTime = frameTime
+        source.lastScaled = target
         return target
     }
+
+    @Synchronized
+    fun lastFrameTime(file: File): Double =
+        sources[file.absolutePath]?.decoder?.lastDecodedTime ?: Double.NaN
 
     @Synchronized
     fun close() {

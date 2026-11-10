@@ -41,6 +41,7 @@ class AndroidProjectRepository(private val context: Context) {
     private val projectsDir = File(root, "projects").apply { mkdirs() }
     private val trashDir = File(root, "trash").apply { mkdirs() }
     private val thumbnailCache = LruCache<String, Bitmap>(24)
+    private val previewImageCache = HashMap<String, Pair<Double, ImageBitmap>>()
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -198,20 +199,32 @@ class AndroidProjectRepository(private val context: Context) {
 
     fun releasePreviewFrames() {
         runCatching { previewDecoder.close() }
+        previewImageCache.clear()
     }
 
     suspend fun loadThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? {
         val path = project.media?.screen?.relativePath ?: return null
         val file = File(File(projectsDir, project.id), path)
         if (!file.exists()) return null
-        return decodePreviewFrame(file, atTime)?.asImageBitmap()
+        val bitmap = decodePreviewFrame(file, atTime) ?: return null
+        return imageFor(file, bitmap)
     }
 
     suspend fun loadCameraThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? {
         val path = project.media?.camera?.relativePath ?: return null
         val file = File(File(projectsDir, project.id), path)
         if (!file.exists()) return null
-        return decodePreviewFrame(file, atTime)?.asImageBitmap()
+        val bitmap = decodePreviewFrame(file, atTime) ?: return null
+        return imageFor(file, bitmap)
+    }
+
+    private fun imageFor(file: File, bitmap: android.graphics.Bitmap): ImageBitmap {
+        val frameTime = previewDecoder.lastFrameTime(file)
+        val cached = previewImageCache[file.absolutePath]
+        if (cached != null && cached.first == frameTime) return cached.second
+        val image = bitmap.asImageBitmap()
+        previewImageCache[file.absolutePath] = frameTime to image
+        return image
     }
 
     suspend fun loadStickerBitmap(project: RecorderProject, relativePath: String): ImageBitmap? = withContext(Dispatchers.IO) {

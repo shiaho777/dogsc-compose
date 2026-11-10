@@ -117,11 +117,20 @@ class VideoFrameSource(file: File) {
         }
     }
 
+    /** Timestamp of the frame most recently returned by [frameAt], in seconds. */
+    val lastDecodedTime: Double get() = lastTime
+
     fun frameAt(time: Double): Bitmap? {
         val extractor = this.extractor ?: return fallback.frameAt(time)
         val codec = this.codec ?: return fallback.frameAt(time)
         val reader = this.reader ?: return fallback.frameAt(time)
         val targetUs = (time.coerceIn(0.0, max(durationSeconds, 0.0)) * 1_000_000).toLong()
+        // A video frame stays on screen for 1/fps seconds. Reuse it instead of decoding the same
+        // source frame again when the preview/export clock ticks faster than the source.
+        val frameInterval = 1.0 / frameRate.coerceAtLeast(1.0)
+        if (seeked && lastFrame != null && time >= lastTime - 0.001 && time <= lastTime + frameInterval * 0.95) {
+            return lastFrame
+        }
         if (!seeked || time < lastTime - 0.05 || time > lastTime + 2.0) {
             seekTo(max(0L, targetUs - 500_000))
         }
