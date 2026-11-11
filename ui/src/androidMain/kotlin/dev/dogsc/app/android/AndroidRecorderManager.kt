@@ -50,6 +50,19 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
+
+private fun capCaptureDimensions(width: Int, height: Int, limit: String): Pair<Int, Int> {
+    if (limit == "native") return width to height
+    val maxLong = if (limit == "4k") 3840 else 1920
+    val maxShort = if (limit == "4k") 2160 else 1080
+    val long = max(width, height)
+    val short = min(width, height)
+    if (long <= maxLong && short <= maxShort) return width to height
+    val scale = min(maxLong.toDouble() / long, maxShort.toDouble() / short).coerceAtMost(1.0)
+    fun even(value: Int) = (value / 2 * 2).coerceAtLeast(2)
+    return even((width * scale).roundToInt()) to even((height * scale).roundToInt())
+}
 
 class AndroidRecorderManager(
     private val activity: ComponentActivity,
@@ -145,8 +158,11 @@ class AndroidRecorderManager(
             )
             val metrics = activity.resources.displayMetrics
         val bounds = activity.windowManager.currentWindowMetrics.bounds
-        val width = (bounds.width() / 2 * 2).coerceAtLeast(2)
-        val height = (bounds.height() / 2 * 2).coerceAtLeast(2)
+        val (width, height) = capCaptureDimensions(
+            (bounds.width() / 2 * 2).coerceAtLeast(2),
+            (bounds.height() / 2 * 2).coerceAtLeast(2),
+            options.captureResolutionLimit,
+        )
             val newCoordinator = RecordingCoordinator(
                 context = activity,
                 repository = repository,
@@ -329,7 +345,16 @@ internal class RecordingCoordinator(
         startedAt = SystemClock.elapsedRealtime()
         screenStartedAtMs = startedAt
         runCatching {
-            screenRecorder = ScreenRecorder(projection, width, height, densityDpi, options.frameRate, screenFile).also { it.start() }
+            screenRecorder = ScreenRecorder(
+                projection,
+                width,
+                height,
+                densityDpi,
+                options.frameRate,
+                screenFile,
+                if (options.captureCodec == "hevc") android.media.MediaFormat.MIMETYPE_VIDEO_HEVC
+                else android.media.MediaFormat.MIMETYPE_VIDEO_AVC,
+            ).also { it.start() }
         }.onFailure {
             onError("无法启动屏幕录制：${it.message}")
             return
@@ -480,6 +505,12 @@ internal class RecordingCoordinator(
         capture = CaptureConfiguration(
             source = CaptureSource.DISPLAY,
             captureFrameRate = if (options.frameRate == 30) dev.dogsc.core.model.OutputFrameRate.FPS_30 else dev.dogsc.core.model.OutputFrameRate.FPS_60,
+            captureCodec = if (options.captureCodec == "hevc") dev.dogsc.core.model.CaptureCodec.HEVC else dev.dogsc.core.model.CaptureCodec.H264,
+            captureResolutionLimit = when (options.captureResolutionLimit) {
+                "4k" -> dev.dogsc.core.model.CaptureResolutionLimit.UHD
+                "1080p" -> dev.dogsc.core.model.CaptureResolutionLimit.FULL_HD
+                else -> dev.dogsc.core.model.CaptureResolutionLimit.NATIVE
+            },
             recordsSystemAudio = options.systemAudio,
             recordsMicrophone = options.microphone,
             recordsCamera = options.camera,
@@ -589,6 +620,12 @@ internal class RecordingCoordinator(
                 capture = CaptureConfiguration(
                     source = CaptureSource.DISPLAY,
                     captureFrameRate = if (options.frameRate == 30) dev.dogsc.core.model.OutputFrameRate.FPS_30 else dev.dogsc.core.model.OutputFrameRate.FPS_60,
+                    captureCodec = if (options.captureCodec == "hevc") dev.dogsc.core.model.CaptureCodec.HEVC else dev.dogsc.core.model.CaptureCodec.H264,
+                    captureResolutionLimit = when (options.captureResolutionLimit) {
+                        "4k" -> dev.dogsc.core.model.CaptureResolutionLimit.UHD
+                        "1080p" -> dev.dogsc.core.model.CaptureResolutionLimit.FULL_HD
+                        else -> dev.dogsc.core.model.CaptureResolutionLimit.NATIVE
+                    },
                     recordsSystemAudio = media.systemAudio != null,
                     recordsMicrophone = media.microphone != null,
                     recordsCamera = media.camera != null,

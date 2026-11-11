@@ -39,6 +39,13 @@ class AndroidDogScPlatform(
     override val supportsTouchCapture: Boolean = true
     override val supportsExport: Boolean = true
     override val supportsScreenRecording: Boolean = true
+    override val supportsHevcCapture: Boolean by lazy {
+        runCatching {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                .codecInfos
+                .any { it.isEncoder && it.supportedTypes.any { type -> type.equals("video/hevc", true) } }
+        }.getOrDefault(false)
+    }
 
     override suspend fun listProjects(): List<ProjectSummary> = repository.listProjects()
 
@@ -190,6 +197,8 @@ class AndroidDogScPlatform(
                 touchCapture = prefs.getBoolean("rec_touch", false),
                 cameraLensFacing = prefs.getInt("rec_lens", 1),
                 cameraQuality = prefs.getString("rec_camera_quality", "auto") ?: "auto",
+                captureCodec = prefs.getString("rec_capture_codec", "h264") ?: "h264",
+                captureResolutionLimit = prefs.getString("rec_capture_limit", "native") ?: "native",
                 frameRate = prefs.getInt("rec_fps", 60),
             ),
             exportSoundEnabled = prefs.getBoolean("export_sound", true),
@@ -240,6 +249,8 @@ class AndroidDogScPlatform(
             .putBoolean("rec_touch", preferences.recording.touchCapture)
             .putInt("rec_lens", preferences.recording.cameraLensFacing)
             .putString("rec_camera_quality", preferences.recording.cameraQuality)
+            .putString("rec_capture_codec", preferences.recording.captureCodec)
+            .putString("rec_capture_limit", preferences.recording.captureResolutionLimit)
             .putInt("rec_fps", preferences.recording.frameRate)
             .putBoolean("export_sound", preferences.exportSoundEnabled)
             .putString("rec_memo", preferences.memoText)

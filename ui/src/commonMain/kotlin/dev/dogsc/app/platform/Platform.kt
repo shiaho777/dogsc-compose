@@ -68,6 +68,10 @@ data class RecordingOptions(
     val cameraLensFacing: Int = 1,
     /** CameraX quality key: auto, uhd, fhd, hd or sd. */
     val cameraQuality: String = "auto",
+    /** Screen capture codec: h264 or hevc. */
+    val captureCodec: String = "h264",
+    /** Screen capture limit: native, 4k or 1080p. */
+    val captureResolutionLimit: String = "native",
     val frameRate: Int = 60,
 )
 
@@ -98,6 +102,7 @@ interface DogScPlatform {
     val supportsTouchCapture: Boolean
     val supportsExport: Boolean
     val supportsScreenRecording: Boolean
+    val supportsHevcCapture: Boolean get() = false
 
     suspend fun listProjects(): List<ProjectSummary>
     suspend fun loadProject(id: String): LoadedProject?

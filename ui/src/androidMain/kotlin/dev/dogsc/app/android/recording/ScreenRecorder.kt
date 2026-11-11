@@ -20,6 +20,7 @@ class ScreenRecorder(
     private val densityDpi: Int,
     private val frameRate: Int,
     private val outputFile: File,
+    codecMime: String = MediaFormat.MIMETYPE_VIDEO_AVC,
 ) {
     private val codec: MediaCodec
     private val inputSurface: Surface
@@ -34,15 +35,37 @@ class ScreenRecorder(
         private set
 
     init {
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrateFor(width, height, frameRate))
-            setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+        val requested = if (codecMime.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, true)) {
+            MediaFormat.MIMETYPE_VIDEO_HEVC
+        } else {
+            MediaFormat.MIMETYPE_VIDEO_AVC
         }
-        codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        val candidates = if (requested == MediaFormat.MIMETYPE_VIDEO_HEVC) {
+            listOf(MediaFormat.MIMETYPE_VIDEO_HEVC, MediaFormat.MIMETYPE_VIDEO_AVC)
+        } else {
+            listOf(MediaFormat.MIMETYPE_VIDEO_AVC)
+        }
+        var encoder: MediaCodec? = null
+        for (candidate in candidates) {
+            val codecCandidate = runCatching { MediaCodec.createEncoderByType(candidate) }.getOrNull()
+                ?: continue
+            val format = MediaFormat.createVideoFormat(candidate, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitrateFor(width, height, frameRate))
+                setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+            }
+            if (runCatching {
+                    codecCandidate.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                }.isSuccess
+            ) {
+                encoder = codecCandidate
+                break
+            }
+            runCatching { codecCandidate.release() }
+        }
+        codec = encoder ?: throw IllegalStateException("设备没有可用的视频编码器")
         inputSurface = codec.createInputSurface()
         // Fragments are flushed every 2 s, so a crash keeps all footage up to the last fragment.
         writer = FragmentedRecordingWriter(FragmentedRecordingRecovery.partFileFor(outputFile))

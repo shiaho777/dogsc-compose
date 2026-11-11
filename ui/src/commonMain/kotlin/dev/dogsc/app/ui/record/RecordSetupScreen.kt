@@ -129,6 +129,50 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                         compact = true,
                     )
                 }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("编码", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.weight(1f))
+                    SegmentedControl(
+                        options = if (platform.supportsHevcCapture) listOf("H.264", "HEVC") else listOf("H.264"),
+                        selectedIndex = if (options.captureCodec == "hevc") 1 else 0,
+                        onSelect = { index ->
+                            applyOptions(options.copy(captureCodec = if (index == 1) "hevc" else "h264"))
+                        },
+                        compact = true,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("采集上限", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.weight(1f))
+                    SegmentedControl(
+                        options = listOf("原始", "4K", "1080p"),
+                        selectedIndex = when (options.captureResolutionLimit) {
+                            "4k" -> 1
+                            "1080p" -> 2
+                            else -> 0
+                        },
+                        onSelect = { index ->
+                            applyOptions(
+                                options.copy(
+                                    captureResolutionLimit = when (index) {
+                                        1 -> "4k"
+                                        2 -> "1080p"
+                                        else -> "native"
+                                    },
+                                ),
+                            )
+                        },
+                        compact = true,
+                    )
+                }
             }
         }
 

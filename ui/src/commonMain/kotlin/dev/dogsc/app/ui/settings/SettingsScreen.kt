@@ -262,6 +262,44 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                     modifier = Modifier.fillMaxWidth(),
                     compact = true,
                 )
+                Spacer(Modifier.height(8.dp))
+                Text("编码", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(5.dp))
+                SegmentedControl(
+                    options = if (platform.supportsHevcCapture) listOf("H.264", "HEVC") else listOf("H.264"),
+                    selectedIndex = if (state.recordingOptions.captureCodec == "hevc") 1 else 0,
+                    onSelect = { index ->
+                        state.updateRecordingDefaults {
+                            it.copy(captureCodec = if (index == 1) "hevc" else "h264")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    compact = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("采集上限", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(5.dp))
+                SegmentedControl(
+                    options = listOf("原始", "4K", "1080p"),
+                    selectedIndex = when (state.recordingOptions.captureResolutionLimit) {
+                        "4k" -> 1
+                        "1080p" -> 2
+                        else -> 0
+                    },
+                    onSelect = { index ->
+                        state.updateRecordingDefaults {
+                            it.copy(
+                                captureResolutionLimit = when (index) {
+                                    1 -> "4k"
+                                    2 -> "1080p"
+                                    else -> "native"
+                                },
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    compact = true,
+                )
             }
         }
         Spacer(Modifier.height(16.dp))
