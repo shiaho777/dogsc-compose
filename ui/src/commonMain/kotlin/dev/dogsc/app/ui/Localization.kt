@@ -614,6 +614,7 @@ object Loc {
         "管理" to "Manage",
         "可用" to "Available",
         "不可用" to "Unavailable",
+        "源尺寸" to "Source size",
         "右下" to "Bottom right",
         "左下" to "Bottom left",
         "右上" to "Top right",

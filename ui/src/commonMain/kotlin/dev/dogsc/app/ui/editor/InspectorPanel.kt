@@ -1974,6 +1974,12 @@ private fun CameraInspector(state: DogScAppState) {
             ToggleRow("镜像摄像头", "前置摄像头通常需要镜像", camera.isMirrored, { value ->
                 state.updateCamera("切换摄像头镜像") { it.copy(isMirrored = value) }
             })
+            val media = project.media?.camera
+            val width = media?.pixelWidth
+            val height = media?.pixelHeight
+            if (width != null && height != null && width > 0 && height > 0) {
+                Text("源尺寸 ${width}×${height}", color = DogScColors.TertiaryText, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
     InspectorSection("形状与位置") {

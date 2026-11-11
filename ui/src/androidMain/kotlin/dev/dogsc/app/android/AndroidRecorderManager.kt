@@ -536,6 +536,21 @@ internal class RecordingCoordinator(
 
     private data class VideoProbe(val duration: Double, val width: Int, val height: Int)
 
+    private fun probeVideoCodec(file: File): String {
+        val extractor = android.media.MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            (0 until extractor.trackCount).firstNotNullOfOrNull { index ->
+                extractor.getTrackFormat(index).getString(android.media.MediaFormat.KEY_MIME)
+                    ?.takeIf { it.startsWith("video/") }
+            } ?: android.media.MediaFormat.MIMETYPE_VIDEO_AVC
+        } catch (_: Throwable) {
+            android.media.MediaFormat.MIMETYPE_VIDEO_AVC
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
     private fun probeVideo(file: File): VideoProbe {
         val retriever = android.media.MediaMetadataRetriever()
         return try {
@@ -624,7 +639,7 @@ internal class RecordingCoordinator(
                 capture = CaptureConfiguration(
                     source = CaptureSource.DISPLAY,
                     captureFrameRate = if (options.frameRate == 30) dev.dogsc.core.model.OutputFrameRate.FPS_30 else dev.dogsc.core.model.OutputFrameRate.FPS_60,
-                    captureCodec = if (resolvedCaptureMime == android.media.MediaFormat.MIMETYPE_VIDEO_HEVC) dev.dogsc.core.model.CaptureCodec.HEVC else dev.dogsc.core.model.CaptureCodec.H264,
+                    captureCodec = if (probeVideoCodec(screenFile) == android.media.MediaFormat.MIMETYPE_VIDEO_HEVC) dev.dogsc.core.model.CaptureCodec.HEVC else dev.dogsc.core.model.CaptureCodec.H264,
                     captureResolutionLimit = when (options.captureResolutionLimit) {
                         "4k" -> dev.dogsc.core.model.CaptureResolutionLimit.UHD
                         "1080p" -> dev.dogsc.core.model.CaptureResolutionLimit.FULL_HD
