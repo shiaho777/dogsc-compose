@@ -123,6 +123,11 @@ Last updated: 2026-11-10.
 | Menu/shortcut reference | Bottom sheet listing the implemented bindings | Done | Every listed key is handled by the editor (`handleEditorKey`); verified Space, arrows, S, Ctrl+Z, Ctrl+Shift+Z on the emulator |
 | Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Done | Emulator at 1600×2560 / density 240: the inspector rail sits at x 1138–1553 and the timeline keeps its controls |
 | Automated UI tests | Instrumentation test for multi-touch timeline zoom | Done | `androidApp/src/androidTest/.../PinchInjectionTest.kt`; `am instrument` passes on the emulator |
+| First-use coach-mark tour | Static onboarding + permission cards | Partial | Upstream anchors live highlight steps to the permission page, recorder and editor; our content is present but the anchored coach-mark tour is not ported |
+| Project source/package exchange | Video/sticker/background import only | Gap | Upstream exports source media and opens `.dogscproject` packages; Android keeps projects in app-private storage and has no package import/export UI |
+| Capture codec/resolution limit | `CaptureConfiguration` fields exist | Partial | The recorder always encodes H.264 at native display size; upstream exposes HEVC/ProRes and a capture resolution limit |
+| HDR/color-profile export | SDR desktop contract | Partial | Upstream carries a frame color profile; Android exports SDR 8-bit H.264/AAC |
+| Floating camera preview while recording | Live preview in setup; camera PiP added in post | Done | Android MediaProjection would capture a floating preview; a `FLAG_SECURE` preview would punch a black hole in the recording. The setup preview is the platform equivalent |
 | iOS/desktop/web | Shared core/UI prepared; no targets yet | Gap | Android first; commonMain currently has no Android imports |
 
 ## Audit notes
@@ -144,7 +149,8 @@ Last updated: 2026-11-10.
 
 ## Known limits
 
-1. Performance headroom: the CPU Canvas renderer exports a 57.5 s timeline at ~1× realtime; a GPU renderer and multi-hour profiling remain future work, not a functional gap.
+1. Performance headroom: the CPU Canvas renderer exports a 57.5 s timeline at ~1× realtime; a GPU renderer and multi-hour profiling remain future work.
 2. Physical-device camera verification: the emulator records through both virtual lenses; real sensors, focus/exposure and rotation still need hardware.
 3. Continuous touch motion requires Android 14+; older versions use click/scroll anchors (documented in DECISIONS).
-4. Upstream `.dogscproject` import and iOS/desktop/web targets are outside this Android-first round.
+4. First-use coach marks, project source/package exchange, HEVC/ProRes capture, capture resolution limits and HDR/color-profile export are not fully ported yet.
+5. `.dogscproject` compatibility and iOS/desktop/web targets remain outside this Android-first round.
