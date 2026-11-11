@@ -106,6 +106,8 @@ interface DogScPlatform {
     suspend fun loadTrash(): List<ProjectSummary> = emptyList()
     suspend fun restoreProject(id: String): Boolean = false
     suspend fun clearTrash(): Boolean = false
+    suspend fun exportProjectPackage(id: String, outputUri: String): Boolean = false
+    suspend fun importProjectPackage(uri: String): String? = null
     suspend fun duplicateProject(id: String): Boolean
     suspend fun renameProject(id: String, title: String): Boolean
 
@@ -129,6 +131,10 @@ interface DogScPlatform {
     fun openAppSettings()
     fun openAccessibilitySettings()
     fun openUrl(url: String)
+    fun hasSeenTour(kind: String): Boolean = true
+    fun markTourSeen(kind: String) {}
+    fun resetTours() {}
+
     fun hasSeenOnboarding(): Boolean
     fun markOnboardingSeen()
 

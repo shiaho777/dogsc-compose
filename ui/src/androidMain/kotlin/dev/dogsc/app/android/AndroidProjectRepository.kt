@@ -32,7 +32,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import java.util.UUID
 import kotlin.math.max
 import kotlin.math.min
@@ -98,6 +103,66 @@ class AndroidProjectRepository(private val context: Context) {
         if (!source.exists()) return@withContext false
         val destination = File(trashDir, "${id}-${System.currentTimeMillis()}")
         source.renameTo(destination)
+    }
+
+    suspend fun exportProjectPackage(id: String, outputUri: String): Boolean = withContext(Dispatchers.IO) {
+        val dir = File(projectsDir, id)
+        if (!dir.exists()) return@withContext false
+        runCatching {
+            context.contentResolver.openOutputStream(Uri.parse(outputUri))?.use { raw ->
+                ZipOutputStream(BufferedOutputStream(raw)).use { zip ->
+                    dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                        val name = file.relativeTo(dir).invariantSeparatorsPath
+                        if (name.startsWith("../")) return@forEach
+                        zip.putNextEntry(ZipEntry(name))
+                        file.inputStream().use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
+                }
+            } ?: return@withContext false
+            true
+        }.getOrDefault(false)
+    }
+
+    suspend fun importProjectPackage(uri: String): String? = withContext(Dispatchers.IO) {
+        val temp = File(context.cacheDir, "project-import-${UUID.randomUUID()}").apply { mkdirs() }
+        try {
+            context.contentResolver.openInputStream(Uri.parse(uri))?.use { raw ->
+                ZipInputStream(BufferedInputStream(raw)).use { zip ->
+                    while (true) {
+                        val entry = zip.nextEntry ?: break
+                        if (entry.isDirectory) continue
+                        val name = entry.name.replace('\\', '/')
+                        if (name.startsWith("/") || name.split('/').any { it == ".." }) continue
+                        val target = File(temp, name)
+                        target.parentFile?.mkdirs()
+                        target.outputStream().use { zip.copyTo(it) }
+                        zip.closeEntry()
+                    }
+                }
+            } ?: return@withContext null
+            val manifest = temp.walkTopDown().firstOrNull { it.isFile && it.name == "project.json" }
+                ?: return@withContext null
+            val root = manifest.parentFile ?: temp
+            val decoded = ProjectCodec.decodeOrNull(manifest.readText()) ?: return@withContext null
+            val newId = UUID.randomUUID().toString()
+            val project = decoded.copy(
+                id = newId,
+                title = decoded.title.ifBlank { Loc.t("导入的视频") }.take(200),
+                createdAtEpochMs = if (decoded.createdAtEpochMs > 0) decoded.createdAtEpochMs else System.currentTimeMillis(),
+            )
+            val screenRelative = project.media?.screen?.relativePath ?: return@withContext null
+            if (!File(root, screenRelative).exists()) return@withContext null
+            val destination = File(projectsDir, newId)
+            if (!root.copyRecursively(destination, overwrite = true)) return@withContext null
+            File(destination, "project.json").writeText(ProjectCodec.encode(project))
+            ensureThumbnail(project, destination)
+            newId
+        } catch (_: Throwable) {
+            null
+        } finally {
+            temp.deleteRecursively()
+        }
     }
 
     suspend fun loadTrash(): List<ProjectSummary> = withContext(Dispatchers.IO) {

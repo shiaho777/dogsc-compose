@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.OpenInNew
@@ -72,6 +73,8 @@ import dev.dogsc.app.ui.components.PillVariant
 import dev.dogsc.app.ui.components.SoftCard
 import dev.dogsc.app.ui.components.SoftIconButton
 import dev.dogsc.app.ui.formatDate
+import dev.dogsc.app.ui.tour.LocalTourTargets
+import dev.dogsc.app.ui.tour.tourTarget
 import dev.dogsc.app.ui.formatDurationShort
 import dev.dogsc.app.ui.theme.DogScColors
 import dev.dogsc.ui.resources.Res
@@ -116,6 +119,12 @@ fun LibraryScreen(
                 )
             }
             Spacer(Modifier.weight(1f))
+            SoftIconButton(
+                Icons.Outlined.FileDownload,
+                onClick = { host.pickProjectArchive { uri -> if (uri != null) state.importProjectPackage(uri) } },
+                contentDescription = "导入项目",
+            )
+            Spacer(Modifier.width(4.dp))
             SoftIconButton(Icons.Outlined.Settings, onClick = { state.openSettings() }, contentDescription = "设置")
         }
 
@@ -139,11 +148,13 @@ fun LibraryScreen(
                 onClick = onStartRecording,
                 icon = Icons.Outlined.Videocam,
                 variant = PillVariant.Primary,
+                modifier = Modifier.tourTarget("library.record", LocalTourTargets.current),
             )
             PillButton(
                 text = "导入视频",
                 onClick = { host.pickVideo { uri -> if (uri != null) state.importVideo(uri) } },
                 icon = Icons.Outlined.FileUpload,
+                modifier = Modifier.tourTarget("library.import", LocalTourTargets.current),
             )
         }
 
@@ -151,6 +162,7 @@ fun LibraryScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "最近项目",
+                modifier = Modifier.tourTarget("library.projects", LocalTourTargets.current),
                 color = DogScColors.PrimaryText,
                 style = MaterialTheme.typography.titleMedium,
             )
@@ -190,6 +202,16 @@ fun LibraryScreen(
                         onRename = {
                             renameTarget = project
                             renameText = project.title
+                        },
+                        onExport = {
+                            val base = project.title
+                                .removeSuffix(".zip")
+                                .replace(Regex("[\\\\/:*?\"<>|]"), "-")
+                                .take(60)
+                                .ifBlank { "DogSC" }
+                            host.createProjectArchive("$base.zip") { uri ->
+                                if (uri != null) state.exportProjectPackage(project, uri)
+                            }
                         },
                         onDuplicate = { state.duplicateProject(project) },
                     )
@@ -261,6 +283,7 @@ private fun ProjectCard(
     onOpen: () -> Unit,
     onDelete: () -> Unit,
     onRename: () -> Unit,
+    onExport: () -> Unit,
     onDuplicate: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -353,6 +376,11 @@ private fun ProjectCard(
                             text = { Text("打开") },
                             leadingIcon = { Icon(Icons.Outlined.OpenInNew, null) },
                             onClick = { menuOpen = false; onOpen() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("导出项目") },
+                            leadingIcon = { Icon(Icons.Outlined.FileUpload, null) },
+                            onClick = { menuOpen = false; onExport() },
                         )
                         DropdownMenuItem(
                             text = { Text("重命名") },

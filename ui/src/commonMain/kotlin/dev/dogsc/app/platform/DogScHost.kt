@@ -32,6 +32,9 @@ interface DogScHost {
     fun isOverlayPermissionGranted(): Boolean = true
     fun openOverlaySettings() {}
 
+    fun pickProjectArchive(onResult: (String?) -> Unit) = onResult(null)
+    fun createProjectArchive(suggestedName: String, onResult: (String?) -> Unit) = onResult(null)
+
     fun pickVideo(onResult: (String?) -> Unit)
     fun pickImage(onResult: (String?) -> Unit)
     fun createExportFile(suggestedName: String, audioOnly: Boolean, onResult: (String?) -> Unit)

@@ -50,6 +50,8 @@ import dev.dogsc.app.ui.components.SegmentedControl
 import dev.dogsc.app.ui.components.SoftCard
 import dev.dogsc.app.ui.components.SoftIconButton
 import dev.dogsc.app.ui.components.ToggleRow
+import dev.dogsc.app.ui.tour.LocalTourTargets
+import dev.dogsc.app.ui.tour.tourTarget
 import dev.dogsc.app.ui.theme.DogScColors
 
 @Composable
@@ -89,7 +91,10 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
         }
         Spacer(Modifier.height(18.dp))
 
-        SoftCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp)) {
+        SoftCard(
+            modifier = Modifier.fillMaxWidth().tourTarget("record.screen", LocalTourTargets.current),
+            shape = RoundedCornerShape(22.dp),
+        ) {
             Column(Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
@@ -128,7 +133,10 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
         }
 
         Spacer(Modifier.height(14.dp))
-        SoftCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp)) {
+        SoftCard(
+            modifier = Modifier.fillMaxWidth().tourTarget("record.audio", LocalTourTargets.current),
+            shape = RoundedCornerShape(22.dp),
+        ) {
             Column(Modifier.padding(14.dp)) {
                 Text("声音", color = DogScColors.SecondaryText, style = MaterialTheme.typography.labelMedium)
                 ToggleRow(
@@ -357,7 +365,7 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
             icon = Icons.Outlined.Videocam,
             variant = PillVariant.Primary,
             enabled = platform.supportsScreenRecording,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
+            modifier = Modifier.fillMaxWidth().height(50.dp).tourTarget("record.start", LocalTourTargets.current),
         )
         Spacer(Modifier.height(24.dp))
     }

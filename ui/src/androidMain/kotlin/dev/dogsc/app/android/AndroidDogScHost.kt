@@ -21,6 +21,8 @@ class AndroidDogScHost(
     private val recorder: AndroidRecorderManager,
 ) : DogScHost {
     var launchPickVideo: (() -> Unit)? = null
+    var launchPickProject: (() -> Unit)? = null
+    var launchCreateArchive: ((String) -> Unit)? = null
     var launchPickImage: (() -> Unit)? = null
     var launchCreateDocument: ((fileName: String, mimeType: String) -> Unit)? = null
     private var cameraPermissionRequested = false
@@ -28,6 +30,8 @@ class AndroidDogScHost(
     private var pendingPickVideo: ((String?) -> Unit)? = null
     private var pendingPickImage: ((String?) -> Unit)? = null
     private var pendingCreateDocument: ((String?) -> Unit)? = null
+    private var pendingPickProject: ((String?) -> Unit)? = null
+    private var pendingCreateArchive: ((String?) -> Unit)? = null
 
     companion object {
         const val REQUEST_CAMERA_PREVIEW = 9003
@@ -55,6 +59,16 @@ class AndroidDogScHost(
         )
     }
 
+    override fun pickProjectArchive(onResult: (String?) -> Unit) {
+        pendingPickProject = onResult
+        launchPickProject?.invoke() ?: onResult(null)
+    }
+
+    override fun createProjectArchive(suggestedName: String, onResult: (String?) -> Unit) {
+        pendingCreateArchive = onResult
+        launchCreateArchive?.invoke(suggestedName) ?: onResult(null)
+    }
+
     override fun pickVideo(onResult: (String?) -> Unit) {
         pendingPickVideo = onResult
         launchPickVideo?.invoke() ?: onResult(null)
@@ -75,6 +89,18 @@ class AndroidDogScHost(
             suggestedName,
             if (audioOnly) "audio/mp4" else "video/mp4",
         ) ?: onResult(null)
+    }
+
+    fun handlePickedProject(uri: String?) {
+        val callback = pendingPickProject
+        pendingPickProject = null
+        callback?.invoke(uri)
+    }
+
+    fun handleCreatedArchive(uri: String?) {
+        val callback = pendingCreateArchive
+        pendingCreateArchive = null
+        callback?.invoke(uri)
     }
 
     fun handlePickedVideo(uri: String?) {

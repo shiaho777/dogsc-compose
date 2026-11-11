@@ -81,6 +81,8 @@ class DogScAppState(
     var toast by mutableStateOf<ToastMessage?>(null)
     var showOnboarding by mutableStateOf(!platform.hasSeenOnboarding())
         private set
+    var requestedTour by mutableStateOf<String?>(null)
+        private set
     var isBusy by mutableStateOf(false)
         private set
     var busyMessage by mutableStateOf("")
@@ -313,6 +315,14 @@ class DogScAppState(
             refreshProjects()
             if (cleared) showToast("回收站已清空") else showToast("清空失败", isError = true)
         }
+    }
+
+    fun requestTour(kind: String) {
+        requestedTour = kind
+    }
+
+    fun consumeTourRequest() {
+        requestedTour = null
     }
 
     fun finishOnboarding() {
@@ -1097,6 +1107,31 @@ class DogScAppState(
                 showToast("已创建副本")
             } else {
                 showToast("复制失败", isError = true)
+            }
+        }
+    }
+
+    fun exportProjectPackage(summary: ProjectSummary, outputUri: String) {
+        scope.launch {
+            isBusy = true
+            busyMessage = "正在导出项目"
+            val exported = platform.exportProjectPackage(summary.id, outputUri)
+            isBusy = false
+            if (exported) showToast("项目已导出") else showToast("导出失败", isError = true)
+        }
+    }
+
+    fun importProjectPackage(uri: String) {
+        scope.launch {
+            isBusy = true
+            busyMessage = "正在导入项目"
+            val id = platform.importProjectPackage(uri)
+            isBusy = false
+            if (id != null) {
+                refreshProjects()
+                showToast("项目已导入")
+            } else {
+                showToast("导入失败", isError = true)
             }
         }
     }

@@ -23,6 +23,12 @@ fun DogScAndroidApp(activity: ComponentActivity) {
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         host.handlePickedImage(uri?.toString())
     }
+    val pickProject = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        host.handlePickedProject(uri?.toString())
+    }
+    val createArchive = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        host.handleCreatedArchive(uri?.toString())
+    }
     val createDocument = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         host.handleCreatedDocument(result.data?.data?.toString())
     }
@@ -36,6 +42,10 @@ fun DogScAndroidApp(activity: ComponentActivity) {
     LaunchedEffect(host) {
         host.launchPickVideo = { pickVideo.launch("video/*") }
         host.launchPickImage = { pickImage.launch("image/*") }
+        host.launchPickProject = {
+            pickProject.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+        }
+        host.launchCreateArchive = { name -> createArchive.launch(name) }
         host.launchCreateDocument = { fileName, mimeType ->
             val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)

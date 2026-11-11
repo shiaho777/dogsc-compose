@@ -85,6 +85,8 @@ import dev.dogsc.app.ui.EditorSelection
 import dev.dogsc.app.ui.InspectorTab
 import dev.dogsc.app.ui.components.PillButton
 import dev.dogsc.app.ui.components.PillVariant
+import dev.dogsc.app.ui.tour.LocalTourTargets
+import dev.dogsc.app.ui.tour.tourTarget
 import dev.dogsc.app.ui.components.SoftIconButton
 import dev.dogsc.app.ui.formatTimecode
 import dev.dogsc.app.ui.theme.DogScColors
@@ -142,7 +144,10 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
                         TimelinePanel(
                             state = state,
                             host = host,
-                            modifier = Modifier.fillMaxWidth().height(if (wide) 250.dp else 206.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(if (wide) 250.dp else 206.dp)
+                                .tourTarget("editor.timeline", LocalTourTargets.current),
                         )
                     }
                 }
@@ -457,6 +462,7 @@ private fun EditorTopBar(
             icon = Icons.Outlined.Download,
             variant = PillVariant.Primary,
             compact = true,
+            modifier = Modifier.tourTarget("editor.export", LocalTourTargets.current),
         )
     }
 }
@@ -623,6 +629,7 @@ private fun InspectorTabStrip(selected: InspectorTab, onSelect: (InspectorTab) -
             .fillMaxWidth()
             .height(42.dp)
             .background(DogScColors.Panel)
+            .tourTarget("editor.inspector", LocalTourTargets.current)
             .padding(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,

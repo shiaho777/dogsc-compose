@@ -25,7 +25,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import dev.dogsc.app.ui.components.Text
+import dev.dogsc.app.ui.tour.FirstUseTourOverlay
+import dev.dogsc.app.ui.tour.LocalTourTargets
+import dev.dogsc.app.ui.tour.TourTargets
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,6 +58,8 @@ fun DogScApp(host: DogScHost) {
     val state = remember { DogScAppState(host.platform, scope) }
     val recorder by host.recorderState.collectAsState()
     var handledRecordingResult by remember { mutableStateOf<String?>(null) }
+    val tourTargets = remember { TourTargets() }
+    var tourKind by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         state.refreshProjects()
@@ -72,6 +78,24 @@ fun DogScApp(host: DogScHost) {
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose { host.keepScreenOn(false) }
     }
+    LaunchedEffect(state.screen, state.showOnboarding) {
+        tourTargets.clear()
+        if (state.showOnboarding || tourKind != null) return@LaunchedEffect
+        val kind = when (val screen = state.screen) {
+            AppScreen.Library -> "library"
+            AppScreen.RecordSetup -> "record"
+            is AppScreen.Editor -> "editor"
+            else -> null
+        }
+        if (kind != null && !host.platform.hasSeenTour(kind)) tourKind = kind
+    }
+
+    LaunchedEffect(state.requestedTour) {
+        val requested = state.requestedTour ?: return@LaunchedEffect
+        tourKind = requested
+        state.consumeTourRequest()
+    }
+
     LaunchedEffect(recorder.error) {
         recorder.error?.let { state.showToast(it, isError = true) }
     }
@@ -105,18 +129,30 @@ fun DogScApp(host: DogScHost) {
     }
     DogScTheme(darkTheme = darkTheme) {
         Box(Modifier.fillMaxSize().background(DogScColors.Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
-            if (state.showOnboarding) {
-                OnboardingScreen(state = state, host = host)
-            } else when (val screen = state.screen) {
-                AppScreen.Library -> LibraryScreen(
-                    state = state,
-                    host = host,
-                    onStartRecording = { state.openRecordSetup() },
+            CompositionLocalProvider(LocalTourTargets provides tourTargets) {
+                if (state.showOnboarding) {
+                    OnboardingScreen(state = state, host = host)
+                } else when (val screen = state.screen) {
+                    AppScreen.Library -> LibraryScreen(
+                        state = state,
+                        host = host,
+                        onStartRecording = { state.openRecordSetup() },
+                    )
+                    AppScreen.RecordSetup -> RecordSetupScreen(state, host)
+                    AppScreen.Recording -> RecordingScreen(state, host)
+                    AppScreen.Settings -> SettingsScreen(state, host)
+                    is AppScreen.Editor -> EditorScreen(state, host)
+                }
+            }
+            tourKind?.let { kind ->
+                FirstUseTourOverlay(
+                    kind = kind,
+                    targets = tourTargets,
+                    onDone = {
+                        host.platform.markTourSeen(kind)
+                        tourKind = null
+                    },
                 )
-                AppScreen.RecordSetup -> RecordSetupScreen(state, host)
-                AppScreen.Recording -> RecordingScreen(state, host)
-                AppScreen.Settings -> SettingsScreen(state, host)
-                is AppScreen.Editor -> EditorScreen(state, host)
             }
 
             AnimatedVisibility(

@@ -31,6 +31,8 @@ class AndroidDogScPlatform(
     private val waveformLoader = AndroidWaveformLoader(repository)
     private val previewAudio = AndroidPreviewAudio(context, repository)
 
+    private fun prefs() = context.getSharedPreferences("dogsc_prefs", Context.MODE_PRIVATE)
+
     override val platformName: String = "Android ${Build.VERSION.RELEASE}"
     override val supportsSystemAudio: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     override val supportsCamera: Boolean = true
@@ -51,6 +53,12 @@ class AndroidDogScPlatform(
     override suspend fun restoreProject(id: String): Boolean = repository.restoreProject(id)
 
     override suspend fun clearTrash(): Boolean = repository.clearTrash()
+
+    override suspend fun exportProjectPackage(id: String, outputUri: String): Boolean =
+        repository.exportProjectPackage(id, outputUri)
+
+    override suspend fun importProjectPackage(uri: String): String? =
+        repository.importProjectPackage(uri)
 
     override suspend fun duplicateProject(id: String): Boolean = repository.duplicateProject(id)
 
@@ -147,6 +155,21 @@ class AndroidDogScPlatform(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+    }
+
+    override fun hasSeenTour(kind: String): Boolean =
+        prefs().getBoolean("tour_${kind}_seen", false)
+
+    override fun markTourSeen(kind: String) {
+        prefs().edit().putBoolean("tour_${kind}_seen", true).apply()
+    }
+
+    override fun resetTours() {
+        prefs().edit()
+            .remove("tour_library_seen")
+            .remove("tour_record_seen")
+            .remove("tour_editor_seen")
+            .apply()
     }
 
     override fun hasSeenOnboarding(): Boolean =
