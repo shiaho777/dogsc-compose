@@ -112,6 +112,7 @@ import dev.dogsc.core.model.NormalizedPoint
 import dev.dogsc.core.model.OverlayTiming
 import dev.dogsc.core.model.ScreenFrameStyle
 import dev.dogsc.core.model.ScreenMotionState
+import dev.dogsc.core.model.TransitionTiming
 import dev.dogsc.core.model.StickerAnimationPreset
 import dev.dogsc.core.model.ZoomEasingPreset
 import dev.dogsc.core.scene.CursorCatalog
@@ -794,45 +795,22 @@ private fun EffectsInspector(state: DogScAppState) {
         }
     }
     state.selectedMosaic()?.let { clip ->
-        InspectorSection("选中区域") {
-            PositionPad(
-                point = NormalizedPoint(clip.sourceRect.x + clip.sourceRect.width / 2, clip.sourceRect.y + clip.sourceRect.height / 2),
-                onChange = { point ->
-                    state.updateProject("移动效果区域") { current ->
+        InspectorSection("区域效果") {
+            SegmentedControl(
+                options = listOf("柔化", "突出"),
+                selectedIndex = if (clip.style == MosaicEffectStyle.BLUR) 0 else 1,
+                onSelect = { index ->
+                    val style = if (index == 0) MosaicEffectStyle.BLUR else MosaicEffectStyle.SPOTLIGHT
+                    state.updateProject("切换效果类型") { current ->
                         current.copy(timeline = current.timeline.copy(
                             mosaicClips = current.timeline.mosaicClips.map {
-                                if (it.id == clip.id) it.copy(
-                                    sourceRect = NormalizedOverlayRect(
-                                        (point.x - clip.sourceRect.width / 2).coerceIn(0.0, 1.0 - clip.sourceRect.width),
-                                        (point.y - clip.sourceRect.height / 2).coerceIn(0.0, 1.0 - clip.sourceRect.height),
-                                        clip.sourceRect.width,
-                                        clip.sourceRect.height,
-                                    )
-                                ) else it
+                                if (it.id == clip.id) it.copy(style = style) else it
                             },
                         ))
                     }
                 },
-            )
-            LabeledSlider(
-                "大小",
-                clip.sourceRect.width.toFloat(),
-                0.05f..0.95f,
-                { value ->
-                    state.updateProject("调整效果区域大小") { current ->
-                        current.copy(timeline = current.timeline.copy(
-                            mosaicClips = current.timeline.mosaicClips.map {
-                                if (it.id == clip.id) it.copy(
-                                    sourceRect = clip.sourceRect.copy(
-                                        width = value.toDouble(),
-                                        height = (value * 0.72).toDouble().coerceIn(0.02, 1.0),
-                                    )
-                                ) else it
-                            },
-                        ))
-                    }
-                },
-                valueLabel = { "${(it * 100).roundToInt()}%" },
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
             )
             if (clip.style == MosaicEffectStyle.BLUR) {
                 LabeledSlider(
@@ -848,6 +826,7 @@ private fun EffectsInspector(state: DogScAppState) {
                             ))
                         }
                     },
+                    valueLabel = { "${(it * 100).roundToInt()}%" },
                 )
             } else {
                 LabeledSlider(
@@ -863,6 +842,7 @@ private fun EffectsInspector(state: DogScAppState) {
                             ))
                         }
                     },
+                    valueLabel = { "${(it * 100).roundToInt()}%" },
                 )
             }
             LabeledSlider(
@@ -878,7 +858,121 @@ private fun EffectsInspector(state: DogScAppState) {
                         ))
                     }
                 },
-                valueLabel = { "${(it).roundToInt()}%" },
+                valueLabel = { "${it.roundToInt()}%" },
+            )
+        }
+        InspectorSection("过渡") {
+            SegmentedControl(
+                options = listOf("无", "线性", "平滑"),
+                selectedIndex = when (clip.transitionStyle) {
+                    MosaicTransitionStyle.NONE -> 0
+                    MosaicTransitionStyle.LINEAR -> 1
+                    MosaicTransitionStyle.SMOOTH -> 2
+                },
+                onSelect = { index ->
+                    val style = when (index) {
+                        0 -> MosaicTransitionStyle.NONE
+                        1 -> MosaicTransitionStyle.LINEAR
+                        else -> MosaicTransitionStyle.SMOOTH
+                    }
+                    state.updateProject("切换效果过渡") { current ->
+                        current.copy(timeline = current.timeline.copy(
+                            mosaicClips = current.timeline.mosaicClips.map {
+                                if (it.id == clip.id) it.copy(transitionStyle = style) else it
+                            },
+                        ))
+                    }
+                },
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (clip.transitionStyle != MosaicTransitionStyle.NONE) {
+                LabeledSlider(
+                    "进入时长",
+                    clip.transitionInDuration.toFloat(),
+                    0f..2f,
+                    { value ->
+                        state.updateProject("调整效果进入时长") { current ->
+                            current.copy(timeline = current.timeline.copy(
+                                mosaicClips = current.timeline.mosaicClips.map {
+                                    if (it.id == clip.id) it.copy(transitionInDuration = value.toDouble()) else it
+                                },
+                            ))
+                        }
+                    },
+                    valueLabel = { "%.2fs".format(it) },
+                )
+                LabeledSlider(
+                    "退出时长",
+                    clip.transitionOutDuration.toFloat(),
+                    0f..2f,
+                    { value ->
+                        state.updateProject("调整效果退出时长") { current ->
+                            current.copy(timeline = current.timeline.copy(
+                                mosaicClips = current.timeline.mosaicClips.map {
+                                    if (it.id == clip.id) it.copy(transitionOutDuration = value.toDouble()) else it
+                                },
+                            ))
+                        }
+                    },
+                    valueLabel = { "%.2fs".format(it) },
+                )
+            }
+        }
+        InspectorSection("位置与尺寸") {
+            PositionPad(
+                point = NormalizedPoint(
+                    clip.sourceRect.x + clip.sourceRect.width / 2,
+                    clip.sourceRect.y + clip.sourceRect.height / 2,
+                ),
+                onChange = { point ->
+                    state.updateProject("移动效果区域") { current ->
+                        current.copy(timeline = current.timeline.copy(
+                            mosaicClips = current.timeline.mosaicClips.map {
+                                if (it.id == clip.id) it.copy(
+                                    sourceRect = clip.sourceRect.copy(
+                                        x = (point.x - clip.sourceRect.width / 2).coerceIn(0.0, 1.0 - clip.sourceRect.width),
+                                        y = (point.y - clip.sourceRect.height / 2).coerceIn(0.0, 1.0 - clip.sourceRect.height),
+                                    ).clamped(),
+                                ) else it
+                            },
+                        ))
+                    }
+                },
+            )
+            LabeledSlider(
+                "宽度",
+                clip.sourceRect.width.toFloat(),
+                0.01f..1f,
+                { value ->
+                    state.updateProject("调整效果区域宽度") { current ->
+                        current.copy(timeline = current.timeline.copy(
+                            mosaicClips = current.timeline.mosaicClips.map {
+                                if (it.id == clip.id) it.copy(
+                                    sourceRect = clip.sourceRect.copy(width = value.toDouble()).clamped(),
+                                ) else it
+                            },
+                        ))
+                    }
+                },
+                valueLabel = { "${(it * 100).roundToInt()}%" },
+            )
+            LabeledSlider(
+                "高度",
+                clip.sourceRect.height.toFloat(),
+                0.01f..1f,
+                { value ->
+                    state.updateProject("调整效果区域高度") { current ->
+                        current.copy(timeline = current.timeline.copy(
+                            mosaicClips = current.timeline.mosaicClips.map {
+                                if (it.id == clip.id) it.copy(
+                                    sourceRect = clip.sourceRect.copy(height = value.toDouble()).clamped(),
+                                ) else it
+                            },
+                        ))
+                    }
+                },
+                valueLabel = { "${(it * 100).roundToInt()}%" },
             )
         }
     }
@@ -920,12 +1014,61 @@ private fun FocusEffectInspector(state: DogScAppState) {
                 selectedIndex = if (current.shape == FocusEffectShape.LINEAR) 1 else 0,
                 onSelect = { index ->
                     updateFocus(state, zoom?.id, screen?.id) {
-                        it.copy(shape = if (index == 0) FocusEffectShape.RADIAL else FocusEffectShape.LINEAR)
+                        if (index == 0) {
+                            it.copy(shape = FocusEffectShape.RADIAL)
+                        } else {
+                            it.copy(
+                                shape = FocusEffectShape.LINEAR,
+                                target = FocusEffectTarget.FIXED,
+                                angleDegrees = it.angleDegrees ?: 0.0,
+                                dimming = 0.0,
+                            )
+                        }
                     }
                 },
                 compact = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (current.shape == FocusEffectShape.LINEAR) {
+                LabeledSlider(
+                    "方向",
+                    (current.angleDegrees ?: 0.0).toFloat(),
+                    0f..360f,
+                    { value ->
+                        updateFocus(state, zoom?.id, screen?.id) {
+                            it.copy(angleDegrees = value.toDouble())
+                        }
+                    },
+                    valueLabel = { "${it.roundToInt()}°" },
+                )
+            } else {
+                SegmentedControl(
+                    options = listOf("随运镜", "随鼠标", "固定"),
+                    selectedIndex = when (current.target) {
+                        FocusEffectTarget.ANIMATION -> 0
+                        FocusEffectTarget.POINTER -> 1
+                        FocusEffectTarget.FIXED -> 2
+                    },
+                    onSelect = { index ->
+                        updateFocus(state, zoom?.id, screen?.id) {
+                            it.copy(
+                                target = when (index) {
+                                    0 -> FocusEffectTarget.ANIMATION
+                                    1 -> FocusEffectTarget.POINTER
+                                    else -> FocusEffectTarget.FIXED
+                                },
+                            )
+                        }
+                    },
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (current.target == FocusEffectTarget.FIXED) {
+                    PositionPad(current.center) { point ->
+                        updateFocus(state, zoom?.id, screen?.id) { it.copy(center = point) }
+                    }
+                }
+            }
             Spacer(Modifier.height(6.dp))
             LabeledSlider("范围", current.size.toFloat(), 0.1f..1f, { value ->
                 updateFocus(state, zoom?.id, screen?.id) { it.copy(size = value.toDouble()) }
@@ -936,9 +1079,11 @@ private fun FocusEffectInspector(state: DogScAppState) {
             LabeledSlider("羽化范围", current.softness.toFloat(), 0f..1f, { value ->
                 updateFocus(state, zoom?.id, screen?.id) { it.copy(softness = value.toDouble()) }
             })
-            LabeledSlider("暗度", current.dimming.toFloat(), 0f..0.75f, { value ->
-                updateFocus(state, zoom?.id, screen?.id) { it.copy(dimming = value.toDouble()) }
-            })
+            if (current.shape != FocusEffectShape.LINEAR) {
+                LabeledSlider("暗度", current.dimming.toFloat(), 0f..0.75f, { value ->
+                    updateFocus(state, zoom?.id, screen?.id) { it.copy(dimming = value.toDouble()) }
+                })
+            }
         }
     }
 }
@@ -1016,8 +1161,43 @@ private fun StickerInspector(state: DogScAppState, host: DogScHost) {
         }
     }
     state.selectedSticker()?.let { clip ->
+        InspectorSection("布局") {
+            PositionPad(clip.position) { point ->
+                state.updateProject("移动贴图") { current ->
+                    current.copy(timeline = current.timeline.copy(
+                        stickerClips = current.timeline.stickerClips.map {
+                            if (it.id == clip.id) it.copy(position = point) else it
+                        },
+                    ))
+                }
+            }
+        }
+        if (project.timeline.stickerClips.size > 1) {
+            InspectorSection("层级") {
+                val ordered = project.timeline.stickerClips.sortedBy { it.layerIndex }
+                val rank = ordered.indexOfFirst { it.id == clip.id }.coerceAtLeast(0)
+                fun moveTo(target: Int) {
+                    val bounded = target.coerceIn(0, ordered.lastIndex)
+                    val reordered = ordered.toMutableList().apply {
+                        removeAt(rank)
+                        add(bounded, clip)
+                    }
+                    val reindexed = reordered.mapIndexed { index, sticker -> sticker.copy(layerIndex = index) }
+                    state.updateProject("调整贴图层级") { current ->
+                        current.copy(timeline = current.timeline.copy(stickerClips = reindexed))
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    PillButton("置底", onClick = { moveTo(0) }, enabled = rank > 0, variant = PillVariant.Ghost, compact = true)
+                    PillButton("下移", onClick = { moveTo(rank - 1) }, enabled = rank > 0, variant = PillVariant.Ghost, compact = true)
+                    PillButton("上移", onClick = { moveTo(rank + 1) }, enabled = rank < ordered.lastIndex, variant = PillVariant.Ghost, compact = true)
+                    PillButton("置顶", onClick = { moveTo(ordered.lastIndex) }, enabled = rank < ordered.lastIndex, variant = PillVariant.Ghost, compact = true)
+                }
+                Text("当前第 ${rank + 1} 层，共 ${ordered.size} 层", color = DogScColors.TertiaryText, style = MaterialTheme.typography.bodySmall)
+            }
+        }
         InspectorSection("外观") {
-            LabeledSlider("宽度", clip.width.toFloat(), 0.05f..1.2f, { value ->
+            LabeledSlider("宽度", clip.width.toFloat(), 0.02f..1.5f, { value ->
                 state.updateProject("调整贴图宽度") { current ->
                     current.copy(timeline = current.timeline.copy(
                         stickerClips = current.timeline.stickerClips.map {
@@ -1044,7 +1224,7 @@ private fun StickerInspector(state: DogScAppState, host: DogScHost) {
                     ))
                 }
             })
-            LabeledSlider("圆角", clip.cornerRadius.toFloat(), 0f..80f, { value ->
+            LabeledSlider("圆角", clip.cornerRadius.toFloat(), 0f..160f, { value ->
                 state.updateProject("调整贴图圆角") { current ->
                     current.copy(timeline = current.timeline.copy(
                         stickerClips = current.timeline.stickerClips.map {
@@ -1053,7 +1233,7 @@ private fun StickerInspector(state: DogScAppState, host: DogScHost) {
                     ))
                 }
             }, valueLabel = { "${it.roundToInt()}" })
-            LabeledSlider("描边", clip.borderWidth.toFloat(), 0f..12f, { value ->
+            LabeledSlider("描边", clip.borderWidth.toFloat(), 0f..40f, { value ->
                 state.updateProject("调整贴图描边") { current ->
                     current.copy(timeline = current.timeline.copy(
                         stickerClips = current.timeline.stickerClips.map {
@@ -1062,6 +1242,21 @@ private fun StickerInspector(state: DogScAppState, host: DogScHost) {
                     ))
                 }
             }, valueLabel = { "${it.roundToInt()}" })
+            if (clip.borderWidth > 0) {
+                ColorRow(
+                    label = "描边颜色",
+                    selected = clip.borderColor,
+                    onSelect = { color ->
+                        state.updateProject("调整贴图描边") { current ->
+                            current.copy(timeline = current.timeline.copy(
+                                stickerClips = current.timeline.stickerClips.map {
+                                    if (it.id == clip.id) it.copy(borderColor = color) else it
+                                },
+                            ))
+                        }
+                    },
+                )
+            }
             LabeledSlider("阴影", clip.shadowOpacity.toFloat(), 0f..1f, { value ->
                 state.updateProject("调整贴图阴影") { current ->
                     current.copy(timeline = current.timeline.copy(
@@ -1071,8 +1266,38 @@ private fun StickerInspector(state: DogScAppState, host: DogScHost) {
                     ))
                 }
             })
+            LabeledSlider("阴影柔化", clip.shadowRadius.toFloat(), 0f..80f, { value ->
+                state.updateProject("调整贴图阴影") { current ->
+                    current.copy(timeline = current.timeline.copy(
+                        stickerClips = current.timeline.stickerClips.map {
+                            if (it.id == clip.id) it.copy(shadowRadius = value.toDouble()) else it
+                        },
+                    ))
+                }
+            }, valueLabel = { "${it.roundToInt()}" })
         }
-        InspectorSection("动画") {
+        InspectorSection("出入场") {
+            Text("动效节奏", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(5.dp))
+            SegmentedControl(
+                options = ElementMotionCurve.entries.map { it.displayName },
+                selectedIndex = ElementMotionCurve.entries.indexOf(clip.animationCurve),
+                onSelect = { index ->
+                    val curve = ElementMotionCurve.entries[index]
+                    state.updateProject("调整贴图入场") { current ->
+                        current.copy(timeline = current.timeline.copy(
+                            stickerClips = current.timeline.stickerClips.map {
+                                if (it.id == clip.id) it.copy(animationCurve = curve) else it
+                            },
+                        ))
+                    }
+                },
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Text("入场方式", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(5.dp))
             AnimationPicker(
                 selected = clip.animation,
                 onSelect = { preset ->
@@ -1094,6 +1319,37 @@ private fun StickerInspector(state: DogScAppState, host: DogScHost) {
                     ))
                 }
             }, valueLabel = { "${(it * 100).roundToInt() / 100.0}s" })
+            Spacer(Modifier.height(8.dp))
+            Text("退场方式", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(5.dp))
+            ToggleRow(
+                "退场自动采用反向动作",
+                null,
+                clip.exitAnimation == null,
+                { auto ->
+                    state.updateProject("调整贴图出场") { current ->
+                        current.copy(timeline = current.timeline.copy(
+                            stickerClips = current.timeline.stickerClips.map {
+                                if (it.id == clip.id) it.copy(exitAnimation = if (auto) null else clip.animation) else it
+                            },
+                        ))
+                    }
+                },
+            )
+            if (clip.exitAnimation != null) {
+                AnimationPicker(
+                    selected = clip.exitAnimation!!,
+                    onSelect = { preset ->
+                        state.updateProject("调整贴图出场") { current ->
+                            current.copy(timeline = current.timeline.copy(
+                                stickerClips = current.timeline.stickerClips.map {
+                                    if (it.id == clip.id) it.copy(exitAnimation = preset) else it
+                                },
+                            ))
+                        }
+                    },
+                )
+            }
             LabeledSlider("出场时长", clip.exitDuration.toFloat(), 0f..2f, { value ->
                 state.updateProject("调整贴图出场时长") { current ->
                     current.copy(timeline = current.timeline.copy(
@@ -1476,11 +1732,51 @@ private fun MotionInspector(state: DogScAppState) {
             PositionPad(screen.target.position) { point ->
                 updateScreen(state, screen.id) { it.copy(target = it.target.copy(position = point)) }
             }
+            TimingSliders(
+                timing = screen.timing,
+                maxDuration = (state.outputDuration - screen.timing.startTime).coerceAtLeast(0.08),
+            ) { timing -> updateScreen(state, screen.id) { it.copy(timing = timing) } }
             PillButton("删除屏幕 3D", onClick = {
                 state.updateProject("删除屏幕 3D") { TimelineEditor.deleteScreenMotion(it, screen.id) }
                 state.select(EditorSelection.None)
             }, variant = PillVariant.Ghost, compact = true)
         }
+    }
+}
+
+@Composable
+private fun TimingSliders(
+    timing: TransitionTiming,
+    maxDuration: Double,
+    onChange: (TransitionTiming) -> Unit,
+) {
+    LabeledSlider(
+        "过渡时长",
+        min(timing.leadInDuration, timing.duration).toFloat(),
+        0f..timing.duration.toFloat().coerceAtLeast(0.01f),
+        { value ->
+            onChange(timing.copy(
+                leadInDuration = value.toDouble(),
+                preferredLeadInDuration = value.toDouble(),
+                leadInProgressOffset = 0.0,
+            ))
+        },
+        valueLabel = { "${(it * 100).roundToInt() / 100.0}s" },
+    )
+    LabeledSlider(
+        "时长",
+        timing.duration.toFloat(),
+        0.08f..max(maxDuration, 0.08).toFloat(),
+        { value -> onChange(timing.copy(duration = value.toDouble())) },
+        valueLabel = { "${(it * 100).roundToInt() / 100.0}s" },
+    )
+    val hold = timing.duration - min(timing.leadInDuration, timing.duration)
+    if (hold > 0.01) {
+        Text(
+            "过渡完成后保持 ${(hold * 100).roundToInt() / 100.0}s",
+            color = DogScColors.TertiaryText,
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -1734,26 +2030,67 @@ private fun CameraInspector(state: DogScAppState) {
                 }
             }, icon = Icons.Outlined.Add, compact = true, enabled = project.media?.camera != null)
         } else {
-            SegmentedControl(
-                options = listOf("画中画", "全屏"),
-                selectedIndex = if (clip.target.layout == CameraLayoutMode.Fullscreen) 1 else 0,
-                onSelect = { index ->
+            ToggleRow(
+                "显示摄像头",
+                null,
+                clip.target.opacity > 0.001,
+                { visible ->
                     updateCameraClip(state, clip.id) {
-                        it.copy(target = it.target.copy(
-                            layout = if (index == 0) CameraLayoutMode.Shape(project.camera.shape) else CameraLayoutMode.Fullscreen,
-                        ))
+                        it.copy(target = it.target.copy(opacity = if (visible) 1.0 else 0.0))
                     }
                 },
-                compact = true,
-                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(6.dp))
-            PositionPad(clip.target.position) { point ->
-                updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(position = point)) }
-            }
-            LabeledSlider("大小", clip.target.size.toFloat(), 0.05f..1f, { value ->
-                updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(size = value.toDouble())) }
+            LabeledSlider("不透明度", clip.target.opacity.toFloat(), 0f..1f, { value ->
+                updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(opacity = value.toDouble())) }
             }, valueLabel = { "${(it * 100).roundToInt()}%" })
+            if (clip.target.opacity > 0.001) {
+                SegmentedControl(
+                    options = listOf("画中画", "全屏"),
+                    selectedIndex = if (clip.target.layout == CameraLayoutMode.Fullscreen) 1 else 0,
+                    onSelect = { index ->
+                        updateCameraClip(state, clip.id) {
+                            it.copy(target = it.target.copy(
+                                layout = if (index == 0) CameraLayoutMode.Shape(project.camera.shape) else CameraLayoutMode.Fullscreen,
+                            ))
+                        }
+                    },
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                val shape = (clip.target.layout as? CameraLayoutMode.Shape)?.shape
+                if (shape != null) {
+                    Spacer(Modifier.height(6.dp))
+                    SegmentedControl(
+                        options = CameraShape.entries.map { it.displayName },
+                        selectedIndex = CameraShape.entries.indexOf(shape),
+                        onSelect = { index ->
+                            updateCameraClip(state, clip.id) {
+                                it.copy(target = it.target.copy(layout = CameraLayoutMode.Shape(CameraShape.entries[index])))
+                            }
+                        },
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (shape != CameraShape.CIRCLE) {
+                        LabeledSlider("圆角", clip.target.roundness.toFloat(), 0f..1f, { value ->
+                            updateCameraClip(state, clip.id) {
+                                it.copy(target = it.target.copy(roundness = value.toDouble()))
+                            }
+                        }, valueLabel = { "${(it * 100).roundToInt()}%" })
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                PositionPad(clip.target.position) { point ->
+                    updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(position = point)) }
+                }
+                LabeledSlider("大小", clip.target.size.toFloat(), 0.05f..1f, { value ->
+                    updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(size = value.toDouble())) }
+                }, valueLabel = { "${(it * 100).roundToInt()}%" })
+            }
+            TimingSliders(
+                timing = clip.timing,
+                maxDuration = (state.outputDuration - clip.timing.startTime).coerceAtLeast(0.08),
+            ) { timing -> updateCameraClip(state, clip.id) { it.copy(timing = timing) } }
             PillButton("删除摄像运动", onClick = {
                 state.updateProject("删除摄像运动") { TimelineEditor.deleteCameraMotion(it, clip.id) }
                 state.select(EditorSelection.None)

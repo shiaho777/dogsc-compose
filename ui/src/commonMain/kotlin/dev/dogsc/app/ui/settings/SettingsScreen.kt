@@ -215,6 +215,34 @@ fun SettingsScreen(state: DogScAppState, host: DogScHost) {
                     { value -> state.updateRecordingDefaults { it.copy(camera = value) } },
                     enabled = platform.supportsCamera,
                 )
+                if (state.recordingOptions.camera) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("摄像头画质", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(5.dp))
+                    SegmentedControl(
+                        options = listOf("自动", "1080p", "720p", "480p"),
+                        selectedIndex = when (state.recordingOptions.cameraQuality) {
+                            "fhd" -> 1
+                            "hd" -> 2
+                            "sd" -> 3
+                            else -> 0
+                        },
+                        onSelect = { index ->
+                            state.updateRecordingDefaults {
+                                it.copy(
+                                    cameraQuality = when (index) {
+                                        1 -> "fhd"
+                                        2 -> "hd"
+                                        3 -> "sd"
+                                        else -> "auto"
+                                    },
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        compact = true,
+                    )
+                }
                 ToggleRow(
                     "记录触控位置",
                     "用于光标轨迹与自动运镜，需要无障碍服务",

@@ -303,7 +303,7 @@ internal class RecordingCoordinator(
         // first moments would leave an orphan media directory that the library cannot surface.
         runCatching { runBlocking(Dispatchers.IO) { repository.saveProject(preliminaryProject()) } }
         if (options.camera) {
-            val recorder = CameraRecorder(context, options.cameraLensFacing, cameraFile)
+            val recorder = CameraRecorder(context, options.cameraLensFacing, options.cameraQuality, cameraFile)
             cameraRecorder = recorder
             recorder.start { ready ->
                 if (stopping) return@start

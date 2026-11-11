@@ -166,6 +166,7 @@ class AndroidDogScPlatform(
                 camera = prefs.getBoolean("rec_camera", false),
                 touchCapture = prefs.getBoolean("rec_touch", false),
                 cameraLensFacing = prefs.getInt("rec_lens", 1),
+                cameraQuality = prefs.getString("rec_camera_quality", "auto") ?: "auto",
                 frameRate = prefs.getInt("rec_fps", 60),
             ),
             exportSoundEnabled = prefs.getBoolean("export_sound", true),
@@ -215,6 +216,7 @@ class AndroidDogScPlatform(
             .putBoolean("rec_camera", preferences.recording.camera)
             .putBoolean("rec_touch", preferences.recording.touchCapture)
             .putInt("rec_lens", preferences.recording.cameraLensFacing)
+            .putString("rec_camera_quality", preferences.recording.cameraQuality)
             .putInt("rec_fps", preferences.recording.frameRate)
             .putBoolean("export_sound", preferences.exportSoundEnabled)
             .putString("rec_memo", preferences.memoText)

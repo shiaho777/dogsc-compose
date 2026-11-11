@@ -66,6 +66,8 @@ data class RecordingOptions(
     val camera: Boolean = false,
     val touchCapture: Boolean = false,
     val cameraLensFacing: Int = 1,
+    /** CameraX quality key: auto, uhd, fhd, hd or sd. */
+    val cameraQuality: String = "auto",
     val frameRate: Int = 60,
 )
 

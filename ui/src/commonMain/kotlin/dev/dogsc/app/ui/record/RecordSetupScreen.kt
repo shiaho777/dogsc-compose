@@ -182,6 +182,35 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                             compact = true,
                         )
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 42.dp, top = 2.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("画质", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.weight(1f))
+                        SegmentedControl(
+                            options = listOf("自动", "1080p", "720p", "480p"),
+                            selectedIndex = when (options.cameraQuality) {
+                                "fhd" -> 1
+                                "hd" -> 2
+                                "sd" -> 3
+                                else -> 0
+                            },
+                            onSelect = { index ->
+                                applyOptions(
+                                    options.copy(
+                                        cameraQuality = when (index) {
+                                            1 -> "fhd"
+                                            2 -> "hd"
+                                            3 -> "sd"
+                                            else -> "auto"
+                                        },
+                                    ),
+                                )
+                            },
+                            compact = true,
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     if (cameraGranted) {
                         Box(

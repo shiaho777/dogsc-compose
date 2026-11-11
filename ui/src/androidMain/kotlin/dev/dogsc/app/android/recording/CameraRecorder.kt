@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit
 class CameraRecorder(
     private val context: Context,
     private val lensFacing: Int,
+    private val quality: String,
     private val outputFile: File,
 ) {
     private val lifecycleOwner = RecorderLifecycleOwner()
@@ -44,10 +45,24 @@ class CameraRecorder(
             try {
                 val cameraProvider = future.get()
                 provider = cameraProvider
+                val preferred = when (quality) {
+                    "uhd" -> Quality.UHD
+                    "fhd" -> Quality.FHD
+                    "hd" -> Quality.HD
+                    "sd" -> Quality.SD
+                    else -> null
+                }
+                val qualities = when (preferred) {
+                    Quality.UHD -> listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD)
+                    Quality.FHD -> listOf(Quality.FHD, Quality.HD, Quality.SD)
+                    Quality.HD -> listOf(Quality.HD, Quality.SD)
+                    Quality.SD -> listOf(Quality.SD)
+                    else -> listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD)
+                }
                 val recorder = Recorder.Builder()
                     .setQualitySelector(
                         QualitySelector.fromOrderedList(
-                            listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD),
+                            qualities,
                             FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
                         )
                     )
