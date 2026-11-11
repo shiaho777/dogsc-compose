@@ -25,6 +25,7 @@ import dev.dogsc.core.model.ProjectMediaManifest
 import dev.dogsc.core.model.ProjectMediaReference
 import dev.dogsc.core.model.RecorderProject
 import dev.dogsc.core.project.ProjectCodec
+import dev.dogsc.core.project.ProjectPackageCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -144,17 +145,34 @@ class AndroidProjectRepository(private val context: Context) {
             val manifest = temp.walkTopDown().firstOrNull { it.isFile && it.name == "project.json" }
                 ?: return@withContext null
             val root = manifest.parentFile ?: temp
-            val decoded = ProjectCodec.decodeOrNull(manifest.readText()) ?: return@withContext null
+            val rawProject = manifest.readText()
+            val directError = runCatching { ProjectCodec.decode(rawProject) }.exceptionOrNull()
+            val adaptedText = if (directError != null) ProjectPackageCompat.adapt(rawProject) else null
+            val decoded = if (directError == null) {
+                ProjectCodec.decode(rawProject)
+            } else {
+                val adaptedError = adaptedText?.let { runCatching { ProjectCodec.decode(it) }.exceptionOrNull() }
+                if (adaptedError != null) {
+                    Log.e("DogSCImport", "decode failed direct=$directError adapted=$adaptedError", adaptedError)
+                }
+                adaptedText?.let { ProjectCodec.decodeOrNull(it) }
+            } ?: return@withContext null
             val newId = UUID.randomUUID().toString()
             val project = decoded.copy(
                 id = newId,
                 title = decoded.title.ifBlank { Loc.t("导入的视频") }.take(200),
                 createdAtEpochMs = if (decoded.createdAtEpochMs > 0) decoded.createdAtEpochMs else System.currentTimeMillis(),
             )
-            val screenRelative = project.media?.screen?.relativePath ?: return@withContext null
-            if (!File(root, screenRelative).exists()) return@withContext null
+            val screenRelative = project.media?.screen?.relativePath
+            if (screenRelative == null || !File(root, screenRelative).exists()) {
+                Log.e("DogSCImport", "missing screen $screenRelative root=$root")
+                return@withContext null
+            }
             val destination = File(projectsDir, newId)
-            if (!root.copyRecursively(destination, overwrite = true)) return@withContext null
+            if (!root.copyRecursively(destination, overwrite = true)) {
+                Log.e("DogSCImport", "copy failed $root -> $destination")
+                return@withContext null
+            }
             File(destination, "project.json").writeText(ProjectCodec.encode(project))
             ensureThumbnail(project, destination)
             newId

@@ -302,6 +302,7 @@ internal class RecordingCoordinator(
     private var screenStartedAtMs = 0L
     private var cameraStartedAtMs = 0L
     private var screenStarted = false
+    private var resolvedCaptureMime: String = android.media.MediaFormat.MIMETYPE_VIDEO_AVC
     private var pausedAt: Long? = null
     private var pausedTotalMs = 0L
     private val pauseIntervals = mutableListOf<Pair<Double, Double>>()
@@ -354,7 +355,10 @@ internal class RecordingCoordinator(
                 screenFile,
                 if (options.captureCodec == "hevc") android.media.MediaFormat.MIMETYPE_VIDEO_HEVC
                 else android.media.MediaFormat.MIMETYPE_VIDEO_AVC,
-            ).also { it.start() }
+            ).also {
+                resolvedCaptureMime = it.resolvedMime
+                it.start()
+            }
         }.onFailure {
             onError("无法启动屏幕录制：${it.message}")
             return
@@ -620,7 +624,7 @@ internal class RecordingCoordinator(
                 capture = CaptureConfiguration(
                     source = CaptureSource.DISPLAY,
                     captureFrameRate = if (options.frameRate == 30) dev.dogsc.core.model.OutputFrameRate.FPS_30 else dev.dogsc.core.model.OutputFrameRate.FPS_60,
-                    captureCodec = if (options.captureCodec == "hevc") dev.dogsc.core.model.CaptureCodec.HEVC else dev.dogsc.core.model.CaptureCodec.H264,
+                    captureCodec = if (resolvedCaptureMime == android.media.MediaFormat.MIMETYPE_VIDEO_HEVC) dev.dogsc.core.model.CaptureCodec.HEVC else dev.dogsc.core.model.CaptureCodec.H264,
                     captureResolutionLimit = when (options.captureResolutionLimit) {
                         "4k" -> dev.dogsc.core.model.CaptureResolutionLimit.UHD
                         "1080p" -> dev.dogsc.core.model.CaptureResolutionLimit.FULL_HD

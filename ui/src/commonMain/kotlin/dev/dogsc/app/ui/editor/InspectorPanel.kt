@@ -1431,6 +1431,10 @@ private fun AnimationPicker(selected: StickerAnimationPreset, onSelect: (Sticker
         StickerAnimationPreset.SLIDE_RIGHT to "从右",
         StickerAnimationPreset.SLIDE_UP to "从上",
         StickerAnimationPreset.SLIDE_DOWN to "从下",
+        StickerAnimationPreset.SLIDE_TOP_LEFT to "左上",
+        StickerAnimationPreset.SLIDE_TOP_RIGHT to "右上",
+        StickerAnimationPreset.SLIDE_BOTTOM_LEFT to "左下",
+        StickerAnimationPreset.SLIDE_BOTTOM_RIGHT to "右下",
     )
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         presets.chunked(4).forEach { row ->

@@ -33,6 +33,8 @@ class ScreenRecorder(
         private set
     @Volatile var error: String? = null
         private set
+    @Volatile var resolvedMime: String = MediaFormat.MIMETYPE_VIDEO_AVC
+        private set
 
     init {
         val requested = if (codecMime.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, true)) {
@@ -61,6 +63,7 @@ class ScreenRecorder(
                 }.isSuccess
             ) {
                 encoder = codecCandidate
+                resolvedMime = candidate
                 break
             }
             runCatching { codecCandidate.release() }
