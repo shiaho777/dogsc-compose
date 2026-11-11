@@ -425,8 +425,8 @@ class DogScAppState(
                 TimelineEditor.addSticker(
                     current,
                     dev.dogsc.core.model.OverlayTiming(
-                        playhead.coerceAtLeast(0.0),
-                        min(3.0, max(outputDuration - playhead, 0.4)),
+                        effectStartTime(playhead),
+                        effectDuration(effectStartTime(playhead)),
                     ),
                     path,
                     0.38,
@@ -490,12 +490,20 @@ class DogScAppState(
         }
     }
 
+    /** Adding at the very end must still create a usable clip instead of a dead button. */
+    fun effectStartTime(requested: Double): Double =
+        requested.coerceIn(0.0, max(outputDuration - 0.4, 0.0))
+
+    fun effectDuration(start: Double, default: Double = 3.0): Double =
+        min(default, max(outputDuration - start, 0.2))
+
     fun addMosaicAt(time: Double, style: dev.dogsc.core.model.MosaicEffectStyle) {
-        val duration = min(3.0, max(outputDuration - time, 0.4))
+        val start = effectStartTime(time)
+        val duration = effectDuration(start)
         updateProject(if (style == dev.dogsc.core.model.MosaicEffectStyle.BLUR) "添加柔化" else "添加突出") { current ->
             TimelineEditor.addMosaic(
                 current,
-                dev.dogsc.core.model.OverlayTiming(time.coerceAtLeast(0.0), duration),
+                dev.dogsc.core.model.OverlayTiming(start, duration),
                 dev.dogsc.core.model.NormalizedOverlayRect.Centered,
                 style,
             )

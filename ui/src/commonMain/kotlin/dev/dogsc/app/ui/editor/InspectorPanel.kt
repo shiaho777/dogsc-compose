@@ -1572,7 +1572,7 @@ private fun MotionInspector(state: DogScAppState) {
             Text("在时间线上拖动空白区域创建缩放，或点击下方按钮在播放头添加。", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
             PillButton("在播放头添加缩放", onClick = {
-                val start = state.playhead
+                val start = state.effectStartTime(state.playhead)
                 val end = min(start + 1.2, state.outputDuration)
                 if (end - start >= 0.2) {
                     state.updateProject("添加缩放") {
@@ -1705,7 +1705,7 @@ private fun MotionInspector(state: DogScAppState) {
             Text("让画面在空间中倾斜、旋转或透视，可与缩放同时使用。", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
             PillButton("在播放头添加屏幕 3D", onClick = {
-                val start = state.playhead
+                val start = state.effectStartTime(state.playhead)
                 val end = min(start + 2.0, state.outputDuration)
                 if (end - start >= 0.2) {
                     state.updateProject("添加屏幕 3D") {
@@ -2027,7 +2027,7 @@ private fun CameraInspector(state: DogScAppState) {
             Text("在播放头添加摄像运动，可让摄像头放大到全屏或移动到新的位置。", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
             PillButton("在播放头添加摄像运动", onClick = {
-                val start = state.playhead
+                val start = state.effectStartTime(state.playhead)
                 val end = min(start + 2.0, state.outputDuration)
                 if (end - start >= 0.2) {
                     state.updateProject("添加摄像运动") {
