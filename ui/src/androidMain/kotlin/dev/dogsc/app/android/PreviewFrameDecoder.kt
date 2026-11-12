@@ -23,18 +23,29 @@ class PreviewFrameDecoder {
         var index = 0
         var lastScaledTime = Double.NaN
         var lastScaled: Bitmap? = null
+
+        fun close() {
+            // Compose may still be drawing the last ImageBitmap wrapper; let GC reclaim the
+            // ring instead of recycling pixels underneath the UI thread.
+            buffers.fill(null)
+            lastScaled = null
+            runCatching { decoder.close() }
+        }
     }
 
-    private val sources = HashMap<String, Source>()
+    // Access-ordered LRU: changing a background video must evict the old background,
+    // not the screen or camera decoder that is used on every frame.
+    private val sources = object : LinkedHashMap<String, Source>(4, 0.75f, true) {}
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
     private val dst = Rect()
 
     @Synchronized
     fun frame(file: File, time: Double, maxWidth: Int = 720): Bitmap? {
-        // Keep at most two decoders alive (screen + camera); each holds full-size buffers.
-        if (!sources.containsKey(file.absolutePath) && sources.size >= 2) {
+        // Keep at most three decoders alive (screen + camera + background video);
+        // each holds full-size buffers.
+        if (!sources.containsKey(file.absolutePath) && sources.size >= 3) {
             val stale = sources.keys.first()
-            sources.remove(stale)?.let { runCatching { it.decoder.close() } }
+            sources.remove(stale)?.close()
         }
         val source = sources.getOrPut(file.absolutePath) { Source(file) }
         val full = runCatching { source.decoder.frameAt(time) }.getOrNull() ?: return null
@@ -63,7 +74,7 @@ class PreviewFrameDecoder {
 
     @Synchronized
     fun close() {
-        sources.values.forEach { runCatching { it.decoder.close() } }
+        sources.values.forEach { it.close() }
         sources.clear()
     }
 }

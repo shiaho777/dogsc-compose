@@ -98,13 +98,16 @@ class VideoFrameSource(file: File) {
             codec = null
             reader = null
         }
-        width = max(w, 2)
-        height = max(h, 2)
+        val displayWidth = if (rotation % 180 != 0) h else w
+        val displayHeight = if (rotation % 180 != 0) w else h
+        width = max(displayWidth, 2)
+        height = max(displayHeight, 2)
         frameRate = if (detectedFrameRate > 0.5) detectedFrameRate else 30.0
         argb = IntArray(width * height)
         if (rotation != 0) {
-            // Rotated sources are rare on Android recordings; the retriever
-            // applies orientation for us in that path.
+            // The emulator/device decoder output for a display-matrix video is not reliably
+            // oriented (observed a 180° coded output for a 270° matrix). MediaMetadataRetriever
+            // returns frames already oriented, so rotated sources use that path.
             if (extractor != null) {
                 runCatching { codec?.stop() }
                 runCatching { codec?.release() }
@@ -240,6 +243,8 @@ class VideoFrameSource(file: File) {
     }
 
     fun close() {
+        reused?.recycle()
+        reused = null
         runCatching { codec?.stop() }
         runCatching { codec?.release() }
         runCatching { reader?.close() }

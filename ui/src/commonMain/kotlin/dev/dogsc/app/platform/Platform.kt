@@ -55,6 +55,7 @@ sealed class ExportResult {
         val sizeBytes: Long,
         val width: Int = 0,
         val height: Int = 0,
+        val frameRate: Int = 0,
     ) : ExportResult()
     data class Failure(val message: String) : ExportResult()
     data object Cancelled : ExportResult()
@@ -124,6 +125,7 @@ interface DogScPlatform {
     suspend fun loadCameraThumbnail(project: RecorderProject, atTime: Double): ImageBitmap?
     suspend fun loadStickerBitmap(project: RecorderProject, relativePath: String): ImageBitmap?
     suspend fun loadBackgroundBitmap(project: RecorderProject): ImageBitmap?
+    suspend fun loadBackgroundThumbnail(project: RecorderProject, atTime: Double): ImageBitmap?
     suspend fun loadWaveform(project: RecorderProject, sourceDuration: Double, buckets: Int = 600): FloatArray?
     suspend fun loadFilmstrip(project: RecorderProject, count: Int = 12): List<ImageBitmap>
     suspend fun loadScenePresets(): List<ScenePreset>
@@ -153,6 +155,7 @@ interface DogScPlatform {
     fun seekPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {}
     fun pausePreviewAudio() {}
     fun releasePreviewAudio() {}
+    fun refreshPreviewAudioVolume(project: RecorderProject, outputTime: Double) {}
     fun releasePreviewFrames() {}
 
     /** Clamps an export size to what the platform encoder supports (identity by default). */

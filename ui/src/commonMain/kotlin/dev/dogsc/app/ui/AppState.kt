@@ -20,6 +20,7 @@ import dev.dogsc.core.model.ExportSettings
 import dev.dogsc.core.model.MotionStyle
 import dev.dogsc.core.model.OpeningSequence
 import dev.dogsc.core.model.RecorderProject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -144,6 +145,14 @@ class DogScAppState(
     private var previewJob: Job? = null
     private var pendingPreviewTime: Double? = null
     private var previewMediaSignature: String? = null
+    /** Bumped whenever the editor changes project; stale async loads must never publish into the new one. */
+    private var mediaGeneration = 0L
+    /** Invalidates an in-flight open/import when the user navigates away or picks another project. */
+    private var projectLoadToken = 0L
+    private var projectsRefreshToken = 0L
+    private var exportGeneration = 0L
+    private var exportInFlight = false
+    private var preferencesGeneration = 0L
     private var playbackJob: Job? = null
     private var toastJob: Job? = null
     private var exportJob: Job? = null
@@ -240,15 +249,28 @@ class DogScAppState(
             appearance = appearance,
             english = english,
         )
-        scope.launch { runCatching { platform.savePreferences(snapshot) } }
+        val generation = ++preferencesGeneration
+        scope.launch {
+            if (generation == preferencesGeneration) {
+                runCatching { platform.savePreferences(snapshot) }
+            }
+        }
     }
 
     fun saveScenePreset(name: String) {
         val project = project ?: return
+        val safeCanvas = when (project.canvas.backgroundSource) {
+            // A relative project-image path would point into whichever project applies the
+            // preset later; presets carry style, not another project's media.
+            is dev.dogsc.core.model.BackgroundSource.ProjectImage,
+            is dev.dogsc.core.model.BackgroundSource.ProjectVideo,
+            -> project.canvas.copy(backgroundSource = dev.dogsc.core.model.BackgroundSource.SafeFallback)
+            else -> project.canvas
+        }
         val preset = dev.dogsc.app.platform.ScenePreset(
             id = dev.dogsc.core.model.randomId(),
             name = name.take(60),
-            canvas = project.canvas,
+            canvas = safeCanvas,
             camera = project.camera,
             cursorStyle = project.cursorStyle,
             openingSequence = project.openingSequence,
@@ -283,10 +305,17 @@ class DogScAppState(
     }
 
     fun refreshProjects() {
+        val token = ++projectsRefreshToken
         scope.launch {
             isLoadingProjects = true
-            projects = platform.listProjects().sortedByDescending { it.updatedAtEpochMs }
-            trashedProjects = platform.loadTrash()
+            val fresh = runCatching { platform.listProjects() }
+                .getOrDefault(emptyList())
+                .sortedByDescending { it.updatedAtEpochMs }
+            val trash = runCatching { platform.loadTrash() }.getOrDefault(emptyList())
+            // Two refreshes can overlap (autosave, delete, import); the newest must win.
+            if (token != projectsRefreshToken) return@launch
+            projects = fresh
+            trashedProjects = trash
             isLoadingProjects = false
         }
     }
@@ -335,15 +364,46 @@ class DogScAppState(
     }
 
     fun openLibrary() {
+        projectLoadToken++
+        isBusy = false
+        busyMessage = ""
         stopPlayback()
-        platform.releasePreviewAudio()
-        platform.releasePreviewFrames()
         flushPendingSave()
+        resetEditorMediaState()
         screen = AppScreen.Library
         session = null
         loadedProject = null
-        previewFrame = null
+        selection = EditorSelection.None
         refreshProjects()
+    }
+
+    /**
+     * Drops every frame/audio resource owned by the previous project and cancels its async loads.
+     * Decoder callbacks are not always cancellable, so [mediaGeneration] also guards publication.
+     */
+    private fun resetEditorMediaState() {
+        mediaGeneration++
+        previewJob?.cancel()
+        previewJob = null
+        waveformJob?.cancel()
+        waveformJob = null
+        pendingPreviewTime = null
+        previewFrame = null
+        cameraPreviewFrame = null
+        backgroundPreviewFrame = null
+        stickerFrames = emptyMap()
+        filmstripFrames = emptyList()
+        waveform = null
+        isPreviewLoading = false
+        previewMediaSignature = null
+        showExportSheet = false
+        showScenePresetSheet = false
+        showMarkersSheet = false
+        showShortcutSheet = false
+        isPlaying = false
+        activeScenePresetId = null
+        platform.releasePreviewAudio()
+        platform.releasePreviewFrames()
     }
 
     fun openRecordSetup() {
@@ -363,16 +423,20 @@ class DogScAppState(
     }
 
     fun openProject(summary: ProjectSummary) {
+        val token = ++projectLoadToken
+        stopPlayback()
         scope.launch {
             isBusy = true
             busyMessage = "正在载入项目"
-            val loaded = platform.loadProject(summary.id)
+            val loaded = runCatching { platform.loadProject(summary.id) }.getOrNull()
+            if (token != projectLoadToken) return@launch
             isBusy = false
             if (loaded == null) {
                 showToast("无法打开项目：文件缺失或已损坏", isError = true)
                 refreshProjects()
                 return@launch
             }
+            resetEditorMediaState()
             session = EditorSession(loaded.project, loaded.sourceDuration)
             loadedProject = loaded
             playhead = 0.0
@@ -382,45 +446,60 @@ class DogScAppState(
             screen = AppScreen.Editor(loaded.project.id)
             requestPreviewFrame(0.0)
             refreshStaticMedia(force = true)
-            waveform = null
-            filmstripFrames = emptyList()
-            scope.launch { filmstripFrames = platform.loadFilmstrip(loaded.project, 12) }
+            val generation = mediaGeneration
+            scope.launch {
+                val frames = platform.loadFilmstrip(loaded.project, 12)
+                if (generation == mediaGeneration) filmstripFrames = frames
+            }
         }
     }
 
     fun importVideo(uri: String) {
+        val token = ++projectLoadToken
+        stopPlayback()
         scope.launch {
             isBusy = true
             busyMessage = "正在导入视频"
-            val loaded = platform.importVideo(uri)
+            val loaded = runCatching { platform.importVideo(uri) }.getOrNull()
+            if (token != projectLoadToken) return@launch
             isBusy = false
             if (loaded == null) {
                 showToast("无法导入这个视频", isError = true)
                 return@launch
             }
+            resetEditorMediaState()
             refreshProjects()
             session = EditorSession(loaded.project, loaded.sourceDuration)
             loadedProject = loaded
             playhead = 0.0
             selection = EditorSelection.None
+            inspectorTab = InspectorTab.CANVAS
+            canvasPane = CanvasPane.BACKGROUND
             screen = AppScreen.Editor(loaded.project.id)
             requestPreviewFrame(0.0)
             refreshStaticMedia(force = true)
+            val generation = mediaGeneration
+            scope.launch {
+                val frames = platform.loadFilmstrip(loaded.project, 12)
+                if (generation == mediaGeneration) filmstripFrames = frames
+            }
             showToast("已导入「${loaded.project.title}」")
         }
     }
 
     fun importSticker(uri: String) {
         val project = project ?: return
+        val projectId = project.id
         scope.launch {
             isBusy = true
             busyMessage = "正在导入贴图"
-            val path = platform.importSticker(project.id, uri)
+            val path = platform.importSticker(projectId, uri)
             isBusy = false
             if (path == null) {
                 showToast("无法导入这张图片", isError = true)
                 return@launch
             }
+            if (project?.id != projectId) return@launch
             updateProject("添加贴图") { current ->
                 TimelineEditor.addSticker(
                     current,
@@ -439,15 +518,17 @@ class DogScAppState(
 
     fun setBackground(uri: String, isVideo: Boolean) {
         val project = project ?: return
+        val projectId = project.id
         scope.launch {
             isBusy = true
             busyMessage = if (isVideo) "正在导入背景视频" else "正在导入背景图片"
-            val path = platform.importBackground(project.id, uri, isVideo)
+            val path = platform.importBackground(projectId, uri, isVideo)
             isBusy = false
             if (path == null) {
                 showToast("无法导入背景素材", isError = true)
                 return@launch
             }
+            if (project?.id != projectId) return@launch
             updateProject("更换背景") { current ->
                 current.copy(canvas = current.canvas.copy(
                     backgroundSource = if (isVideo) {
@@ -457,7 +538,8 @@ class DogScAppState(
                     },
                 ))
             }
-            backgroundPreviewFrame = platform.loadBackgroundBitmap(project)
+            // refreshStaticMedia() was triggered by updateProject; loading the old project here
+            // would race it and briefly publish the previous background.
             showToast("背景已更新")
         }
     }
@@ -469,11 +551,18 @@ class DogScAppState(
             return
         }
         updateProject("生成自动运镜") { current ->
-            val generated = dev.dogsc.core.model.AutoZoomPlanner.makeAnimations(
-                events,
-                zoomScale = current.motion.defaultZoomScale ?: 1.6,
-                easing = current.motion.defaultZoomEasing,
-                transitionDuration = current.motion.defaultZoomTransitionDuration,
+            // Clicks are recorded against the source clock; zoom clips live on the edited
+            // output clock. Mapping them here keeps auto motion aligned after cuts/retimes.
+            val map = TimelineEditor.timelineMap(current, sourceDuration)
+            val outputEvents = map.mapPointerEventSegments(events).flatMap { it.events }
+            val generated = dev.dogsc.core.model.AutoZoomPlanner.clipped(
+                dev.dogsc.core.model.AutoZoomPlanner.makeAnimations(
+                    outputEvents,
+                    zoomScale = current.motion.defaultZoomScale ?: 1.6,
+                    easing = current.motion.defaultZoomEasing,
+                    transitionDuration = current.motion.defaultZoomTransitionDuration,
+                ),
+                map.outputDuration,
             )
             current.copy(timeline = current.timeline.copy(
                 zoomClips = current.timeline.zoomClips.filter { it.origin == dev.dogsc.core.model.ZoomKeyframeOrigin.MANUAL } + generated,
@@ -526,15 +615,23 @@ class DogScAppState(
         (selection as? EditorSelection.Sticker)?.let { sel -> project?.timeline?.stickerClips?.firstOrNull { it.id == sel.clipId } }
 
     fun openRecordingResult(loaded: LoadedProject) {
+        projectLoadToken++
+        stopPlayback()
+        resetEditorMediaState()
         session = EditorSession(loaded.project, loaded.sourceDuration)
         loadedProject = loaded
         playhead = 0.0
         selection = EditorSelection.None
+        inspectorTab = InspectorTab.CANVAS
+        canvasPane = CanvasPane.BACKGROUND
         screen = AppScreen.Editor(loaded.project.id)
         requestPreviewFrame(0.0)
         refreshStaticMedia(force = true)
-        filmstripFrames = emptyList()
-        scope.launch { filmstripFrames = platform.loadFilmstrip(loaded.project, 12) }
+        val generation = mediaGeneration
+        scope.launch {
+            val frames = platform.loadFilmstrip(loaded.project, 12)
+            if (generation == mediaGeneration) filmstripFrames = frames
+        }
         refreshProjects()
     }
 
@@ -565,10 +662,17 @@ class DogScAppState(
     }
 
     private suspend fun persist(project: RecorderProject, showConfirmation: Boolean) {
-        val saved = saveMutex.withLock { platform.saveProject(project) }
+        // While waiting for the mutex, newer edits may have arrived. Writing the captured
+        // snapshot would then overwrite them with stale data if saves complete out of order.
+        val written = saveMutex.withLock {
+            val latest = session?.project?.takeIf { it.id == project.id } ?: project
+            latest to runCatching { platform.saveProject(latest) }.getOrDefault(false)
+        }
+        val saved = written.second
+        val persistedProject = written.first
         if (saved) {
             val current = session
-            if (current != null && current.project === project) {
+            if (current != null && current.project === persistedProject) {
                 current.markSaved()
                 sessionRevision++
             }
@@ -585,7 +689,8 @@ class DogScAppState(
         val session = session ?: return
         val committed = try {
             session.commit(label, transform)
-        } catch (error: dev.dogsc.core.model.ProjectValidationException) {
+        } catch (error: IllegalArgumentException) {
+            // Core invariants use require(); a malformed edit must become a toast, not a crash.
             showToast(error.message ?: "操作无效", isError = true)
             false
         }
@@ -626,6 +731,7 @@ class DogScAppState(
     private fun onProjectChanged() {
         requestPreviewFrame(playhead)
         refreshStaticMedia()
+        if (isPlaying) project?.let { platform.refreshPreviewAudioVolume(it, playhead) }
         if (showWaveform) requestWaveform()
         scheduleAutosave()
     }
@@ -637,9 +743,12 @@ class DogScAppState(
 
     fun requestWaveform() {
         val project = project ?: return
+        val projectId = project.id
+        val generation = mediaGeneration
         waveformJob?.cancel()
         waveformJob = scope.launch {
-            waveform = platform.loadWaveform(project, sourceDuration, 700)
+            val values = platform.loadWaveform(project, sourceDuration, 700)
+            if (generation == mediaGeneration && project?.id == projectId) waveform = values
         }
     }
 
@@ -664,7 +773,12 @@ class DogScAppState(
         val clamped = time.coerceIn(0.0, max(duration, 0.0))
         playhead = clamped
         if (updatePreview) requestPreviewFrame(clamped)
-        if (isPlaying) project?.let { platform.seekPreviewAudio(it, sourceDuration, clamped) }
+        if (isPlaying) {
+            project?.let { platform.seekPreviewAudio(it, sourceDuration, clamped) }
+            // The playback loop counts from its start origin; without restarting it the
+            // playhead would snap back to the pre-seek position on the next tick.
+            startPlaybackClock(clamped)
+        }
     }
 
     fun stepFrames(frames: Int) {
@@ -681,11 +795,14 @@ class DogScAppState(
         if (playhead >= outputDuration - 0.01) playhead = 0.0
         isPlaying = true
         project?.let { platform.startPreviewAudio(it, sourceDuration, playhead) }
+        startPlaybackClock(playhead)
+    }
+
+    private fun startPlaybackClock(origin: Double) {
         playbackJob?.cancel()
         playbackJob = scope.launch {
             // Monotonic clock instead of "playhead += 0.016": no drift and no dependence on
             // how long each frame's work takes.
-            val origin = playhead
             val startedAt = kotlin.time.TimeSource.Monotonic.markNow()
             var lastFrameRequest = -1.0
             while (isPlaying) {
@@ -716,6 +833,8 @@ class DogScAppState(
 
     fun requestPreviewFrame(time: Double) {
         val project = project ?: return
+        val projectId = project.id
+        val generation = mediaGeneration
         // Coalesce requests: while a frame is decoding, keep only the newest target instead of
         // cancelling and restarting a decode (which leaves the native retriever working anyway).
         pendingPreviewTime = time
@@ -724,21 +843,63 @@ class DogScAppState(
             while (true) {
                 val target = pendingPreviewTime ?: break
                 pendingPreviewTime = null
+                if (generation != mediaGeneration || project?.id != projectId) break
                 val current = project ?: break
                 isPreviewLoading = previewFrame == null
-                val frame = platform.loadThumbnail(current, target)
-                if (pendingPreviewTime == null) {
+                val sourceDuration = sourceDuration
+                // The playhead is in output time. Cuts and speed changes move the matching
+                // source frame, so decoding at the raw playhead made preview disagree with export.
+                val screenTime = runCatching {
+                    dev.dogsc.core.model.TimelineMap(
+                        current.timeline.sourceSequence,
+                        sourceDuration,
+                    ).sourceTimeAtOutput(target)
+                }.getOrNull() ?: target
+                val frame = platform.loadThumbnail(current, screenTime)
+                val cameraTime = previewCameraSourceTime(current, sourceDuration, target)
+                val isVideoBackground =
+                    current.canvas.backgroundSource is dev.dogsc.core.model.BackgroundSource.ProjectVideo
+                val backgroundFrame = if (isVideoBackground) {
+                    platform.loadBackgroundThumbnail(current, target)
+                } else {
+                    null
+                }
+                if (pendingPreviewTime == null && generation == mediaGeneration && project?.id == projectId) {
                     if (frame != null) previewFrame = frame
-                    cameraPreviewFrame = if (current.media?.camera != null && !current.camera.isHidden) {
-                        platform.loadCameraThumbnail(current, target)
+                    cameraPreviewFrame = if (cameraTime != null && !current.camera.isHidden) {
+                        platform.loadCameraThumbnail(current, cameraTime)
                     } else {
                         null
                     }
+                    if (backgroundFrame != null) backgroundPreviewFrame = backgroundFrame
                     isPreviewLoading = false
                 }
                 if (pendingPreviewTime == null) break
             }
         }
+    }
+
+    /** Camera leads/offsets and timeline cuts map the same way as the export camera plan. */
+    private fun previewCameraSourceTime(
+        project: RecorderProject,
+        sourceDuration: Double,
+        outputTime: Double,
+    ): Double? {
+        val reference = project.media?.camera ?: return null
+        return runCatching {
+            val map = dev.dogsc.core.model.TimelineMap(project.timeline.sourceSequence, sourceDuration)
+            val available = reference.sourceEndTime ?: reference.durationSeconds ?: sourceDuration
+            val placement = dev.dogsc.core.model.MediaTimelinePlacement.from(
+                reference,
+                sourceAvailableDuration = available,
+                timelineDuration = sourceDuration,
+            )
+            dev.dogsc.core.model.TimelineMediaPlan.auxiliary(
+                map,
+                placement,
+                syncAnchors = reference.syncAnchors,
+            ).sourceTimeAtOutput(outputTime)
+        }.getOrNull()
     }
 
     /**
@@ -747,6 +908,8 @@ class DogScAppState(
      */
     fun refreshStaticMedia(force: Boolean = false) {
         val current = project ?: return
+        val projectId = current.id
+        val generation = mediaGeneration
         val signature = buildString {
             append(current.canvas.backgroundSource)
             append('|')
@@ -755,7 +918,7 @@ class DogScAppState(
         if (!force && signature == previewMediaSignature) return
         previewMediaSignature = signature
         scope.launch {
-            backgroundPreviewFrame = if (current.canvas.backgroundSource.usesWallpaperMedia) {
+            val background = if (current.canvas.backgroundSource.usesWallpaperMedia) {
                 platform.loadBackgroundBitmap(current)
             } else {
                 null
@@ -764,7 +927,15 @@ class DogScAppState(
             for (clip in current.timeline.stickerClips) {
                 platform.loadStickerBitmap(current, clip.relativePath)?.let { stickers[clip.relativePath] = it }
             }
-            stickerFrames = stickers
+            // A newer edit may have started its own load while this one was decoding.
+            if (
+                generation == mediaGeneration &&
+                project?.id == projectId &&
+                previewMediaSignature == signature
+            ) {
+                backgroundPreviewFrame = background
+                stickerFrames = stickers
+            }
         }
     }
 
@@ -837,9 +1008,15 @@ class DogScAppState(
         val project = project ?: return
         val map = TimelineEditor.timelineMap(project, sourceDuration)
         val segment = map.segments.firstOrNull { it.id == segmentId } ?: return
+        val previousSourceEnd = map.segments
+            .filter { it.id != segmentId && it.sourceEnd <= segment.sourceStart + 0.0001 }
+            .maxOfOrNull { it.sourceEnd } ?: 0.0
+        val nextSourceStart = map.segments
+            .filter { it.id != segmentId && it.sourceStart >= segment.sourceEnd - 0.0001 }
+            .minOfOrNull { it.sourceStart } ?: sourceDuration
         if (leading) {
             val newStart = (segment.sourceStart + deltaSeconds * segment.playbackRate)
-                .coerceIn(0.0, segment.sourceEnd - 0.08 * segment.playbackRate)
+                .coerceIn(previousSourceEnd, segment.sourceEnd - 0.08 * segment.playbackRate)
             updateProject("裁切片段") { current ->
                 current.copy(timeline = current.timeline.copy(
                     sourceSequence = dev.dogsc.core.model.SourceSequence.Edited(
@@ -861,7 +1038,7 @@ class DogScAppState(
             }
         } else {
             val newEnd = (segment.sourceEnd + deltaSeconds * segment.playbackRate)
-                .coerceIn(segment.sourceStart + 0.08 * segment.playbackRate, sourceDuration)
+                .coerceIn(segment.sourceStart + 0.08 * segment.playbackRate, nextSourceStart)
             updateProject("裁切片段") { current ->
                 current.copy(timeline = current.timeline.copy(
                     sourceSequence = dev.dogsc.core.model.SourceSequence.Edited(
@@ -1048,31 +1225,67 @@ class DogScAppState(
 
     fun startExport(outputUri: String, audioOnly: Boolean = false, trimStart: Double = 0.0, trimEnd: Double? = null) {
         val project = project ?: return
-        exportJob?.cancel()
+        if (exportInFlight) {
+            showToast("上一个导出仍在完成，请稍候", isError = true)
+            return
+        }
+        val generation = ++exportGeneration
         exportOwnerId = project.id
         lastExportState = null
         exportProgressState = ExportProgress(0f, "正在准备素材")
+        exportInFlight = true
         exportJob = scope.launch {
-            val result = platform.export(
-                ExportRequest(
-                    project = project,
-                    sourceDuration = sourceDuration,
-                    outputUri = outputUri,
-                    audioOnly = audioOnly,
-                    trimStart = trimStart,
-                    trimEnd = trimEnd,
-                ),
-            ) { progress ->
-                scope.launch { if (lastExportState == null && exportJob?.isActive == true) exportProgressState = progress }
+            try {
+            val result = try {
+                platform.export(
+                    ExportRequest(
+                        project = project,
+                        sourceDuration = sourceDuration,
+                        outputUri = outputUri,
+                        audioOnly = audioOnly,
+                        trimStart = trimStart,
+                        trimEnd = trimEnd,
+                    ),
+                ) { progress ->
+                    scope.launch {
+                        if (generation == exportGeneration &&
+                            exportJob?.isActive == true &&
+                            lastExportState == null
+                        ) {
+                            exportProgressState = progress
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                ExportResult.Failure(error.message ?: "导出失败")
             }
+            if (generation != exportGeneration) return@launch
             lastExportState = result
-            if (result is ExportResult.Success) {
-                exportProgressState = null
-                if (exportSoundEnabled) platform.playExportSound()
-                showToast(if (result.width > 0) "已导出 ${result.width}×${result.height} · ${formatFileSize(result.sizeBytes)}" else "已导出 ${formatFileSize(result.sizeBytes)}")
-            } else if (result is ExportResult.Failure) {
-                exportProgressState = null
-                showToast(result.message, isError = true)
+            when (result) {
+                is ExportResult.Success -> {
+                    exportProgressState = null
+                    if (exportSoundEnabled) platform.playExportSound()
+                    showToast(
+                        if (result.width > 0) {
+                            val fps = if (result.frameRate > 0) " · ${result.frameRate} FPS" else ""
+                            "已导出 ${result.width}×${result.height}$fps · ${formatFileSize(result.sizeBytes)}"
+                        } else {
+                            "已导出 ${formatFileSize(result.sizeBytes)}"
+                        },
+                    )
+                }
+                is ExportResult.Failure -> {
+                    exportProgressState = null
+                    showToast(result.message, isError = true)
+                }
+                ExportResult.Cancelled -> {
+                    exportProgressState = null
+                }
+            }
+            } finally {
+                exportInFlight = false
             }
         }
     }
@@ -1083,13 +1296,19 @@ class DogScAppState(
     }
 
     fun cancelExport() {
+        exportGeneration++
         platform.cancelExport()
         exportJob?.cancel()
+        exportJob = null
         exportProgressState = null
         showToast("已取消导出")
     }
 
     fun deleteProject(summary: ProjectSummary) {
+        if (exportInFlight && exportOwnerId == summary.id) {
+            showToast("导出进行中，暂不能删除该项目", isError = true)
+            return
+        }
         scope.launch {
             isBusy = true
             busyMessage = "正在删除项目"
@@ -1104,10 +1323,54 @@ class DogScAppState(
         }
     }
 
+    /**
+     * Editor deletion must not flush a pending edit after the folder moved to the trash.
+     * The repository tombstones the id, and this path never calls openLibrary's save flush.
+     */
+    fun deleteCurrentProject() {
+        val summary = loadedProject?.summary ?: return
+        if (exportInFlight && exportOwnerId == summary.id) {
+            showToast("导出进行中，暂不能删除该项目", isError = true)
+            return
+        }
+        autosaveJob?.cancel()
+        autosaveJob = null
+        scope.launch {
+            isBusy = true
+            busyMessage = "正在删除项目"
+            val deleted = platform.deleteProject(summary.id)
+            isBusy = false
+            if (deleted) {
+                projectLoadToken++
+                resetEditorMediaState()
+                session = null
+                loadedProject = null
+                screen = AppScreen.Library
+                refreshProjects()
+                showToast("已移到回收站")
+            } else {
+                // Keep the unsaved edits safe if the folder could not be moved.
+                scheduleAutosave()
+                showToast("删除失败", isError = true)
+            }
+        }
+    }
+
     fun duplicateProject(summary: ProjectSummary) {
         scope.launch {
             isBusy = true
             busyMessage = "正在复制项目"
+            // Duplicating the open project from the editor must copy today's edits, not the
+            // last autosave snapshot.
+            val open = project?.takeIf { it.id == summary.id }
+            if (open != null) {
+                val saved = saveMutex.withLock { platform.saveProject(open) }
+                if (!saved) {
+                    isBusy = false
+                    showToast("复制前保存失败", isError = true)
+                    return@launch
+                }
+            }
             val duplicated = platform.duplicateProject(summary.id)
             isBusy = false
             if (duplicated) {

@@ -8,7 +8,10 @@ import dev.dogsc.core.model.MediaTimelinePlacement
 import dev.dogsc.core.model.ProjectMediaReference
 import dev.dogsc.core.model.RecorderProject
 import dev.dogsc.core.model.TimelineMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
@@ -32,15 +35,19 @@ class AndroidWaveformLoader(private val repository: AndroidProjectRepository) {
             Triple(screen, null, true),
         ).filter { it.first?.exists() == true }
         for ((file, reference, _) in candidates) {
-            val result = runCatching {
+            val result = try {
                 decode(file!!, project, timelineMap, reference, sourceDuration, buckets)
-            }.getOrNull()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
             if (result != null) return@withContext result
         }
         null
     }
 
-    private fun decode(
+    private suspend fun decode(
         file: File,
         project: RecorderProject,
         timelineMap: TimelineMap,
@@ -52,13 +59,29 @@ class AndroidWaveformLoader(private val repository: AndroidProjectRepository) {
         extractor.setDataSource(file.absolutePath)
         val track = (0 until extractor.trackCount).firstOrNull {
             extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-        } ?: return null
+        } ?: run {
+            extractor.release()
+            return null
+        }
         extractor.selectTrack(track)
         val format = extractor.getTrackFormat(track)
-        val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
-        val codec = MediaCodec.createDecoderByType(mime)
-        codec.configure(format, null, null, 0)
-        codec.start()
+        val mime = format.getString(MediaFormat.KEY_MIME) ?: run {
+            extractor.release()
+            return null
+        }
+        var created: MediaCodec? = null
+        val codec = try {
+            MediaCodec.createDecoderByType(mime).also {
+                created = it
+                it.configure(format, null, null, 0)
+                it.start()
+            }
+        } catch (error: Throwable) {
+            runCatching { created?.stop() }
+            runCatching { created?.release() }
+            runCatching { extractor.release() }
+            throw error
+        }
         val duration = (format.getLongOrDefault(MediaFormat.KEY_DURATION, 0L)) / 1_000_000.0
         val placement = reference?.let {
             MediaTimelinePlacement.from(
@@ -74,6 +97,9 @@ class AndroidWaveformLoader(private val repository: AndroidProjectRepository) {
         val outputDuration = timelineMap.outputDuration.coerceAtLeast(0.01)
         try {
             while (!outputDone) {
+                // Cancelling a waveform for an edited/switched project must stop the
+                // MediaCodec loop too; this is not a cancellable suspension point.
+                currentCoroutineContext().ensureActive()
                 if (!inputDone) {
                     val inputIndex = codec.dequeueInputBuffer(10_000)
                     if (inputIndex >= 0) {

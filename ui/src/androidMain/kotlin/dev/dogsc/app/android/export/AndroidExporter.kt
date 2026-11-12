@@ -62,11 +62,11 @@ class AndroidExporter(
                 val screenRef = project.media?.screen ?: return@withContext ExportResult.Failure("项目缺少录屏素材")
                 val screenFile = File(dir, screenRef.relativePath)
                 if (!screenFile.exists()) return@withContext ExportResult.Failure("录屏文件已丢失")
-                val screenSource = VideoFrameSource(screenFile)
-                val sourceAspect = screenSource.width.toDouble() / max(screenSource.height, 1)
                 val timelineMap = TimelineMap(project.timeline.sourceSequence, request.sourceDuration)
                 val outputDuration = timelineMap.outputDuration
                 if (outputDuration <= 0.01) return@withContext ExportResult.Failure("当前剪辑没有可导出的时长")
+                val screenSource = VideoFrameSource(screenFile)
+                val sourceAspect = screenSource.width.toDouble() / max(screenSource.height, 1)
                 val trimStart = request.trimStart.coerceIn(0.0, (outputDuration - 0.01).coerceAtLeast(0.0))
                 val trimEnd = (request.trimEnd ?: outputDuration).coerceIn(
                     (trimStart + 0.01).coerceAtMost(outputDuration),
@@ -90,7 +90,13 @@ class AndroidExporter(
                         timelineDuration = request.sourceDuration,
                     )
                 }
-                val cameraPlan = cameraPlacement?.let { TimelineMediaPlan.auxiliary(timelineMap, it) }
+                val cameraPlan = cameraPlacement?.let {
+                    TimelineMediaPlan.auxiliary(
+                        timelineMap,
+                        it,
+                        syncAnchors = cameraRef?.syncAnchors ?: emptyList(),
+                    )
+                }
                 val cameraAspect = cameraSource?.let { it.width.toDouble() / max(it.height, 1) }
 
                 val backgroundSource = project.canvas.backgroundSource
@@ -142,6 +148,7 @@ class AndroidExporter(
                     runCatching { backgroundVideo?.close() }
                 }
 
+                try {
                 var audioReady = false
                 val audioMixer = AndroidAudioMixer(context, repository)
                 if (request.audioOnly) {
@@ -154,18 +161,30 @@ class AndroidExporter(
                         onProgress,
                         trimStart,
                         trimEnd,
+                        isCancelled = { cancelled },
                     )
                     if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
                     if (!audioReady) return@withContext ExportResult.Failure("当前剪辑没有可导出的声音")
                     copyToDestination(tempAudio, request.outputUri)
+                    if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
                     onProgress(ExportProgress(1f, "导出完成"))
                     closeSources()
                     return@withContext ExportResult.Success(request.outputUri, tempAudio.length())
                 }
 
                 onProgress(ExportProgress(0.02f, "正在准备素材"))
-                val frameRate = project.exportSettings.frameRate.value
-                val requiredBytes = ExportEncodingPolicy.videoBitrate(outputWidth, outputHeight, frameRate)
+                val frameRate = EncoderCapabilities.frameRate(
+                    outputWidth,
+                    outputHeight,
+                    project.exportSettings.frameRate.value,
+                )
+                val videoBitrate = EncoderCapabilities.bitrate(
+                    outputWidth,
+                    outputHeight,
+                    frameRate,
+                    ExportEncodingPolicy.videoBitrate(outputWidth, outputHeight, frameRate),
+                )
+                val requiredBytes = videoBitrate
                     .toLong() / 8L * exportDuration.toLong().coerceAtLeast(1L) + 32L * 1024 * 1024
                 val freeBytes = runCatching { StatFs(context.cacheDir.path).availableBytes }
                     .getOrDefault(Long.MAX_VALUE)
@@ -177,7 +196,7 @@ class AndroidExporter(
                     outputWidth,
                     outputHeight,
                     frameRate,
-                    ExportEncodingPolicy.videoBitrate(outputWidth, outputHeight, frameRate),
+                    videoBitrate,
                     tempVideo,
                 )
                 val renderer = CanvasFrameRenderer(outputWidth, outputHeight)
@@ -280,6 +299,7 @@ class AndroidExporter(
                     onProgress,
                     trimStart,
                     trimEnd,
+                    isCancelled = { cancelled },
                 )
                 if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
 
@@ -291,13 +311,22 @@ class AndroidExporter(
                 }
                 if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
                 copyToDestination(finalFile, request.outputUri)
+                if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
                 val size = finalFile.length()
                 tempVideo.delete()
                 tempAudio.delete()
                 finalFile.delete()
                 onProgress(ExportProgress(1f, "导出完成"))
                 closeSources()
-                ExportResult.Success(request.outputUri, size, outputWidth, outputHeight)
+                ExportResult.Success(request.outputUri, size, outputWidth, outputHeight, frameRate)
+                } finally {
+                    // Success, failure and cancellation all leave through here. Without this,
+                    // a failed export kept MediaCodec decoders and multi-hundred-MB temp files.
+                    runCatching { closeSources() }
+                    runCatching { tempVideo.delete() }
+                    runCatching { tempAudio.delete() }
+                    runCatching { finalFile.delete() }
+                }
             } catch (error: Throwable) {
                 Log.e("DogSCExport", "export failed", error)
                 if (cancelled) {
@@ -408,6 +437,7 @@ private class CanvasVideoEncoder(
 
     init {
         codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        try {
         val codecInfo = codec.codecInfo ?: throw IllegalStateException("设备没有可用的 H.264 编码器")
         val capabilities = codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
         colorFormat = when {
@@ -426,9 +456,29 @@ private class CanvasVideoEncoder(
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
         }
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        val configured = runCatching {
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        }.isSuccess || runCatching {
+            format.setInteger(
+                MediaFormat.KEY_BITRATE_MODE,
+                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
+            )
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        }.isSuccess
+        if (!configured) error("编码器不支持当前导出参数")
         codec.start()
-        muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        } catch (error: Throwable) {
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+            throw error
+        }
+        muxer = try {
+            MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        } catch (error: Throwable) {
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+            throw error
+        }
     }
 
     fun encodeFrame(bitmap: Bitmap, presentationTimeUs: Long) {
@@ -464,11 +514,14 @@ private class CanvasVideoEncoder(
     }
 
     private fun drain(endOfStream: Boolean) {
+        var idle = 0
         while (true) {
             val index = codec.dequeueOutputBuffer(bufferInfo, if (endOfStream) 10_000 else 0)
             when {
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> {
                     if (!endOfStream) return
+                    // A broken encoder must not hang export forever after EOS was queued.
+                    if (++idle > 500) return
                 }
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     if (!muxerStarted) {
@@ -478,6 +531,7 @@ private class CanvasVideoEncoder(
                     }
                 }
                 index >= 0 -> {
+                    idle = 0
                     val buffer = codec.getOutputBuffer(index)
                     if (buffer != null && bufferInfo.size > 0 && muxerStarted) {
                         buffer.position(bufferInfo.offset)

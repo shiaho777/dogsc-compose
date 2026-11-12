@@ -1,7 +1,11 @@
 package dev.dogsc.app.android
 
 import android.content.Context
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -18,103 +22,279 @@ import java.io.File
 
 /**
  * Timeline audio for the editor preview. Cuts are honoured by one clipped ExoPlayer item per
- * timeline slice, and each slice's speed is applied when the player transitions to its item.
+ * timeline slice. System and microphone are separate players so the preview mixes the same two
+ * sources with the same per-segment gains as the export mixer.
  */
 class AndroidPreviewAudio(
     private val context: Context,
     private val repository: AndroidProjectRepository,
 ) {
-    private var player: ExoPlayer? = null
-    private var slices: List<TimelineMediaSlice> = emptyList()
-    private var rates: List<Float> = emptyList()
+    private enum class TrackKind { SYSTEM, MICROPHONE }
+
+    private inner class Track(val kind: TrackKind) {
+        var player: ExoPlayer? = null
+        var slices: List<TimelineMediaSlice> = emptyList()
+        var rates: List<Float> = emptyList()
+        var signature: String? = null
+    }
+
+    private data class PreparedTrack(
+        val items: List<MediaItem>,
+        val slices: List<TimelineMediaSlice>,
+        val rates: List<Float>,
+        val signature: String,
+    )
+
+    private val audioManager = context.getSystemService(AudioManager::class.java)
+    private val systemTrack = Track(TrackKind.SYSTEM)
+    private val microphoneTrack = Track(TrackKind.MICROPHONE)
+    private var activeProject: RecorderProject? = null
+    private var wantsPlayback = false
+    private var focusRequest: AudioFocusRequest? = null
+    private var ducked = false
+    private var focusLost = false
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                focusLost = true
+                systemTrack.player?.pause()
+                microphoneTrack.player?.pause()
+                // Permanent loss has no matching gain event; re-request on the next play/seek.
+                abandonAudioFocus()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                // Keep wantsPlayback so the audio can resume when focus returns.
+                focusLost = true
+                systemTrack.player?.pause()
+                microphoneTrack.player?.pause()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                ducked = true
+                applyVolumes()
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                ducked = false
+                focusLost = false
+                if (wantsPlayback) {
+                    systemTrack.player?.play()
+                    microphoneTrack.player?.play()
+                }
+                applyVolumes()
+            }
+        }
+    }
 
     fun start(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
-        val prepared = prepare(project, sourceDuration) ?: return
-        val (items, planSlices) = prepared
-        val exo = player ?: ExoPlayer.Builder(context).build().also { created ->
-            player = created
-            created.setAudioAttributes(
+        val timelineMap = runCatching {
+            TimelineMap(project.timeline.sourceSequence, sourceDuration)
+        }.getOrNull() ?: return
+        val prepared = prepare(project, sourceDuration, timelineMap)
+        if (prepared.first == null && prepared.second == null) {
+            systemTrack.player?.pause()
+            microphoneTrack.player?.pause()
+            return
+        }
+        activeProject = project
+        wantsPlayback = true
+        requestAudioFocus()
+        applyTrack(systemTrack, prepared.first, outputTime)
+        applyTrack(microphoneTrack, prepared.second, outputTime)
+    }
+
+    fun seek(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
+        if (!wantsPlayback) return
+        start(project, sourceDuration, outputTime)
+    }
+
+    fun refreshVolume(project: RecorderProject, outputTime: Double) {
+        activeProject = project
+        applyVolumes()
+    }
+
+    fun pause() {
+        wantsPlayback = false
+        focusLost = false
+        systemTrack.player?.pause()
+        microphoneTrack.player?.pause()
+        abandonAudioFocus()
+    }
+
+    fun release() {
+        wantsPlayback = false
+        abandonAudioFocus()
+        releaseTrack(systemTrack)
+        releaseTrack(microphoneTrack)
+        activeProject = null
+    }
+
+    private fun applyTrack(track: Track, prepared: PreparedTrack?, outputTime: Double) {
+        if (prepared == null) {
+            track.player?.let { player ->
+                player.pause()
+                runCatching { player.stop() }
+                runCatching { player.clearMediaItems() }
+            }
+            track.slices = emptyList()
+            track.rates = emptyList()
+            track.signature = null
+            return
+        }
+        val exo = ensurePlayer(track)
+        track.slices = prepared.slices
+        track.rates = prepared.rates
+        // Compare the actual clip plan, not just the item count: retiming a cut can keep the
+        // same number of slices while every source range (and therefore every item) changes.
+        if (prepared.signature != track.signature || exo.mediaItemCount != prepared.items.size) {
+            exo.setMediaItems(prepared.items)
+            exo.prepare()
+            track.signature = prepared.signature
+        }
+        val index = prepared.slices.indexOfLast { it.outputStart <= outputTime }.coerceAtLeast(0)
+        exo.playbackParameters = PlaybackParameters(prepared.rates.getOrElse(index) { 1f })
+        exo.volume = gain(activeProject, prepared.slices.getOrNull(index), track.kind)
+        val offset = ((outputTime - prepared.slices[index].outputStart) * 1000).toLong().coerceAtLeast(0)
+        exo.seekTo(index, offset)
+        exo.playWhenReady = wantsPlayback && !focusLost
+    }
+
+    private fun ensurePlayer(track: Track): ExoPlayer {
+        track.player?.let { return it }
+        val created = ExoPlayer.Builder(context).build().also { exo ->
+            exo.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                     .build(),
-                true,
+                false,
             )
-            created.setHandleAudioBecomingNoisy(true)
-            created.addListener(object : Player.Listener {
+            exo.setHandleAudioBecomingNoisy(true)
+            exo.addListener(object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                    val index = created.currentMediaItemIndex
-                    rates.getOrNull(index)?.let { created.playbackParameters = PlaybackParameters(it) }
+                    val index = exo.currentMediaItemIndex
+                    track.rates.getOrNull(index)?.let { exo.playbackParameters = PlaybackParameters(it) }
+                    exo.volume = gain(
+                        activeProject,
+                        track.slices.getOrNull(index),
+                        track.kind,
+                    )
                 }
             })
         }
-        slices = planSlices
-        rates = planSlices.map { it.sourceTimeScale.toFloat().coerceIn(0.25f, 8f) }
-        if (exo.mediaItemCount != items.size || exo.currentMediaItemIndex >= items.size) {
-            exo.setMediaItems(items)
-            // setMediaItems leaves the player idle; without prepare() playWhenReady does nothing.
-            exo.prepare()
+        track.player = created
+        return created
+    }
+
+    private fun releaseTrack(track: Track) {
+        track.player?.release()
+        track.player = null
+        track.slices = emptyList()
+        track.rates = emptyList()
+        track.signature = null
+    }
+
+    private fun applyVolumes() {
+        val project = activeProject ?: return
+        for (track in listOf(systemTrack, microphoneTrack)) {
+            val exo = track.player ?: continue
+            val index = exo.currentMediaItemIndex
+            exo.volume = gain(project, track.slices.getOrNull(index), track.kind)
         }
-        exo.volume = volumeOf(project)
-        val index = planSlices.indexOfLast { it.outputStart <= outputTime }.coerceAtLeast(0)
-        exo.playbackParameters = PlaybackParameters(rates.getOrElse(index) { 1f })
-        val offset = ((outputTime - planSlices[index].outputStart) * 1000).toLong().coerceAtLeast(0)
-        exo.seekTo(index, offset)
-        exo.playWhenReady = true
     }
 
-    fun seek(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
-        val exo = player ?: return
-        if (!exo.playWhenReady) return
-        start(project, sourceDuration, outputTime)
+    private fun gain(
+        project: RecorderProject?,
+        slice: TimelineMediaSlice?,
+        kind: TrackKind,
+    ): Float {
+        if (project == null || slice == null) return 0f
+        val overrides = project.timeline.primarySegmentAudioOverrides[slice.segmentID]
+        val muted = if (kind == TrackKind.SYSTEM) {
+            overrides?.isSystemMuted ?: project.audio.isSystemMuted
+        } else {
+            overrides?.isMicrophoneMuted ?: project.audio.isMicrophoneMuted
+        }
+        val volume = if (kind == TrackKind.SYSTEM) {
+            overrides?.systemVolume ?: project.audio.systemVolume
+        } else {
+            overrides?.microphoneVolume ?: project.audio.microphoneVolume
+        }
+        if (muted) return 0f
+        return (volume.coerceIn(0.0, 1.0) * if (ducked) 0.2 else 1.0).toFloat()
     }
 
-    fun pause() {
-        player?.playWhenReady = false
+    private fun requestAudioFocus() {
+        if (focusRequest != null) return
+        focusLost = false
+        val attributes = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+            .build()
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(attributes)
+            .setWillPauseWhenDucked(false)
+            .setOnAudioFocusChangeListener(focusListener, Handler(Looper.getMainLooper()))
+            .build()
+        if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            focusRequest = request
+        }
     }
 
-    fun release() {
-        player?.release()
-        player = null
-        slices = emptyList()
-    }
-
-    private fun volumeOf(project: RecorderProject): Float {
-        val system = if (project.audio.isSystemMuted) 0.0 else project.audio.systemVolume
-        val mic = if (project.audio.isMicrophoneMuted) 0.0 else project.audio.microphoneVolume
-        // One preview stream cannot mix; prefer the louder audible source.
-        return maxOf(system, mic).toFloat().coerceIn(0f, 1f)
+    private fun abandonAudioFocus() {
+        focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        focusRequest = null
+        ducked = false
     }
 
     private fun prepare(
         project: RecorderProject,
         sourceDuration: Double,
-    ): Pair<List<MediaItem>, List<TimelineMediaSlice>>? {
+        timelineMap: TimelineMap,
+    ): Pair<PreparedTrack?, PreparedTrack?> {
         val dir = repository.projectDirectory(project.id)
-        val system = project.media?.systemAudio?.let { File(dir, it.relativePath) }?.takeIf { it.exists() }
-        val microphone = project.media?.microphone?.let { File(dir, it.relativePath) }?.takeIf { it.exists() }
-        val screen = project.media?.screen?.let { File(dir, it.relativePath) }?.takeIf { it.exists() }
-        val reference: ProjectMediaReference
-        val file: File
-        val useSystem = system != null && !project.audio.isSystemMuted && project.audio.systemVolume > 0.001
-        val useMic = microphone != null && !project.audio.isMicrophoneMuted && project.audio.microphoneVolume > 0.001
-        when {
-            useSystem -> { file = system!!; reference = project.media!!.systemAudio!! }
-            useMic -> { file = microphone!!; reference = project.media!!.microphone!! }
-            screen != null -> {
-                file = screen
-                reference = project.media?.screen ?: return null
-            }
-            else -> return null
+        val systemFile = project.media?.systemAudio?.let { File(dir, it.relativePath) }
+            ?.takeIf { it.exists() }
+        val microphoneFile = project.media?.microphone?.let { File(dir, it.relativePath) }
+            ?.takeIf { it.exists() }
+        val screenFile = project.media?.screen?.let { File(dir, it.relativePath) }
+            ?.takeIf { it.exists() }
+
+        val system = if (systemFile != null) {
+            makeTrack(systemFile, project.media?.systemAudio, sourceDuration, timelineMap, false)
+        } else if (screenFile != null) {
+            makeTrack(screenFile, project.media?.screen, sourceDuration, timelineMap, true)
+        } else {
+            null
         }
-        val timelineMap = runCatching { TimelineMap(project.timeline.sourceSequence, sourceDuration) }.getOrNull()
-            ?: return null
-        val placement = MediaTimelinePlacement.from(
-            reference,
-            sourceAvailableDuration = sourceDuration,
-            timelineDuration = sourceDuration,
-        )
-        val plan = TimelineMediaPlan.auxiliary(timelineMap, placement)
+        val microphone = if (microphoneFile != null && microphoneFile != systemFile) {
+            makeTrack(microphoneFile, project.media?.microphone, sourceDuration, timelineMap, false)
+        } else {
+            null
+        }
+        return system to microphone
+    }
+
+    private fun makeTrack(
+        file: File,
+        reference: ProjectMediaReference?,
+        sourceDuration: Double,
+        timelineMap: TimelineMap,
+        primary: Boolean,
+    ): PreparedTrack? {
+        val plan = if (primary) {
+            TimelineMediaPlan.primary(timelineMap)
+        } else {
+            val placement = MediaTimelinePlacement.from(
+                reference ?: ProjectMediaReference(file.name),
+                sourceAvailableDuration = sourceDuration,
+                timelineDuration = sourceDuration,
+            )
+            TimelineMediaPlan.auxiliary(
+                timelineMap,
+                placement,
+                syncAnchors = reference?.syncAnchors ?: emptyList(),
+            )
+        }
         if (plan.slices.isEmpty()) return null
         val items = plan.slices.map { slice ->
             MediaItem.Builder()
@@ -127,6 +307,14 @@ class AndroidPreviewAudio(
                 )
                 .build()
         }
-        return items to plan.slices
+        val rates = plan.slices.map { it.sourceTimeScale.toFloat().coerceIn(0.25f, 8f) }
+        val signature = buildString {
+            append(file.absolutePath).append('|').append(primary)
+            plan.slices.forEach {
+                append('|').append(it.sourceStart).append(':').append(it.sourceEnd)
+                    .append(':').append(it.sourceTimeScale)
+            }
+        }
+        return PreparedTrack(items, plan.slices, rates, signature)
     }
 }

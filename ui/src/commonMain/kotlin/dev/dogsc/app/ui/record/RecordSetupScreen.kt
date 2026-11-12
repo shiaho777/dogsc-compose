@@ -490,6 +490,7 @@ fun RecordingScreen(state: DogScAppState, host: DogScHost) {
             "停止录制",
             onClick = { host.stopRecording() },
             variant = PillVariant.Danger,
+            enabled = !recorder.isFinishing,
             modifier = Modifier.fillMaxWidth().height(52.dp),
         )
         if (recorder.error != null) {
@@ -497,6 +498,11 @@ fun RecordingScreen(state: DogScAppState, host: DogScHost) {
             Text(recorder.error!!, color = DogScColors.Danger, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(16.dp))
-        PillButton("丢弃这次录制", onClick = { host.discardRecording() }, variant = PillVariant.Ghost)
+        PillButton(
+            "丢弃这次录制",
+            onClick = { host.discardRecording() },
+            variant = PillVariant.Ghost,
+            enabled = !recorder.isFinishing,
+        )
     }
 }

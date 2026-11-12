@@ -76,7 +76,10 @@ Screenshots are judged by UI dumps (`uiautomator dump`) and PIL pixel sampling, 
 
 - `adb shell dumpsys gfxinfo dev.dogsc.app reset`, play for a few seconds, then `dumpsys gfxinfo dev.dogsc.app` — look at the 50th/90th percentiles and "Slow issue draw commands".
 - Preview decoding is the hot path: a `MediaMetadataRetriever` per request cost 50–110 ms/frame on a 1080×2400 recording. The editor now uses one persistent MediaCodec decoder per file (`PreviewFrameDecoder`) with scaled ring buffers; a full-layer shadow blur was replaced by expanding strokes.
-- `adb shell dumpsys audio` while playing shows the preview `AudioTrack` state; Space pauses it.
+- `adb shell dumpsys audio` while playing a project with system + microphone audio must show two app `AudioTrack`s in `state:started` (one per source); Space pauses both.
+- **Preview time mapping**: split or trim the start of a project, then seek to output 0. The screen frame must match the trimmed source start, not source 0. Core test: `editedTimelineMapsPlayheadToTrimmedSourceTime`.
+- **Rotated import**: push a landscape clip with a 90° display matrix, import it, and check `project.json` (`pixelWidth=360`, `pixelHeight=640` for a 640×360 coded source). Preview, filmstrip and exported frame must match `ffmpeg`/`MediaMetadataRetriever` display orientation; exporting again must not rotate twice.
+- **Project switch isolation**: open project A, scrub, then immediately open project B. The preview, camera frame, filmstrip, waveform, sticker set and background must belong to B; no A frame may appear after B loads.
 - **4K fallback**: request 4K on a device whose AVC encoder lacks 3840×2160; the export sheet must show the effective size and the encoder-limit note, and the file must match it (emulator: 3840×2160 → 1620×910).
 - **Long recording**: export a ~1 minute timeline and compare wall time with duration; log timestamps `video start` / `video encoded` / `DogSCAudio: encode done`.
 - **Frame rates**: export a short range at 30 and 60 FPS; `ffprobe -select_streams v:0 -show_entries stream=r_frame_rate` must report `30/1` and `60/1`.

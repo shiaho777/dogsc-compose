@@ -31,12 +31,23 @@ object ProjectValidator {
         }
         validate(project.timeline)
         if (project.title.length > 200) throw ProjectValidationException("项目名称过长。")
+        when (val background = project.canvas.backgroundSource) {
+            is BackgroundSource.ProjectImage -> requirePath(background.relativePath)
+            is BackgroundSource.ProjectVideo -> requirePath(background.relativePath)
+            else -> Unit
+        }
         project.media?.let { media ->
-            requirePath(media.screen.relativePath)
-            media.camera?.let { requirePath(it.relativePath) }
-            media.microphone?.let { requirePath(it.relativePath) }
-            media.systemAudio?.let { requirePath(it.relativePath) }
-            media.pointerEvents?.let { requirePath(it.relativePath) }
+            validateReference(media.screen)
+            media.camera?.let(::validateReference)
+            media.microphone?.let(::validateReference)
+            media.systemAudio?.let(::validateReference)
+            media.pointerEvents?.let(::validateReference)
+            media.background?.let(::validateReference)
+        }
+        project.recordingMarkers.forEach { marker ->
+            if (!marker.sourceTime.isFinite() || marker.sourceTime < 0 || marker.number <= 0) {
+                throw ProjectValidationException("录制标记无效。")
+            }
         }
     }
 
@@ -131,6 +142,12 @@ object ProjectValidator {
                 throw ProjectValidationException("缩放片段包含无效时间范围。")
             }
             if (clip.scale < 1.0 || !clip.scale.isFinite()) throw ProjectValidationException("缩放倍率无效。")
+            if (!clip.focus.x.isFinite() || clip.focus.x !in 0.0..1.0 ||
+                !clip.focus.y.isFinite() || clip.focus.y !in 0.0..1.0
+            ) {
+                throw ProjectValidationException("缩放焦点无效。")
+            }
+            if (clip.focusEffect?.isValid == false) throw ProjectValidationException("缩放焦点虚化参数无效。")
         }
         for ((previous, next) in zoom.zipWithNext()) {
             if (next.startTime < previous.endTime - 0.0001) {
@@ -141,22 +158,78 @@ object ProjectValidator {
             unique(clip.id, "屏幕")
             validateTiming(clip.timing)
             validateMotionTarget(clip.target)
+            if (clip.focusEffect?.isValid == false) throw ProjectValidationException("焦点虚化参数无效。")
         }
         for (clip in timeline.cameraMotionClips) {
             unique(clip.id, "摄像头")
             validateTiming(clip.timing)
-            if (clip.target.size !in 0.01..1.0) throw ProjectValidationException("摄像头动画大小无效。")
+            val target = clip.target
+            if (!target.position.x.isFinite() || target.position.x !in 0.0..1.0 ||
+                !target.position.y.isFinite() || target.position.y !in 0.0..1.0
+            ) {
+                throw ProjectValidationException("摄像头动画位置无效。")
+            }
+            if (!target.size.isFinite() || target.size !in 0.01..1.0) throw ProjectValidationException("摄像头动画大小无效。")
+            if (!target.roundness.isFinite() || target.roundness !in 0.0..1.0) throw ProjectValidationException("摄像头圆角无效。")
+            if (!target.opacity.isFinite() || target.opacity !in 0.0..1.0) throw ProjectValidationException("摄像头不透明度无效。")
         }
         for (clip in timeline.mosaicClips) {
             unique(clip.id, "打码")
-            if (clip.timing.duration <= 0) throw ProjectValidationException("打码片段时长无效。")
+            validateOverlayTiming(clip.timing, "打码")
+            val rect = clip.sourceRect
+            if (!rect.x.isFinite() || !rect.y.isFinite() ||
+                !rect.width.isFinite() || rect.width !in 0.005..1.0 ||
+                !rect.height.isFinite() || rect.height !in 0.005..1.0 ||
+                rect.x < -0.0001 || rect.y < -0.0001 ||
+                rect.x + rect.width > 1.0001 || rect.y + rect.height > 1.0001
+            ) {
+                throw ProjectValidationException("打码区域无效。")
+            }
+            if (!clip.cornerRadius.isFinite() || clip.cornerRadius !in 0.0..1.0 ||
+                !clip.intensity.isFinite() || clip.intensity !in 0.0..1.0 ||
+                !clip.spotlightDimming.isFinite() || clip.spotlightDimming !in 0.0..1.0
+            ) {
+                throw ProjectValidationException("打码强度无效。")
+            }
+            if (!clip.transitionInDuration.isFinite() || clip.transitionInDuration !in 0.0..5.0 ||
+                !clip.transitionOutDuration.isFinite() || clip.transitionOutDuration !in 0.0..5.0
+            ) {
+                throw ProjectValidationException("打码过渡时长无效。")
+            }
         }
         for (clip in timeline.stickerClips) {
             unique(clip.id, "贴图")
-            if (clip.timing.duration <= 0) throw ProjectValidationException("贴图片段时长无效。")
+            validateOverlayTiming(clip.timing, "贴图")
             requirePath(clip.relativePath)
+            if (!clip.position.x.isFinite() || clip.position.x !in 0.0..1.0 ||
+                !clip.position.y.isFinite() || clip.position.y !in 0.0..1.0
+            ) {
+                throw ProjectValidationException("贴图位置无效。")
+            }
+            if (!clip.width.isFinite() || clip.width !in 0.005..1.5) throw ProjectValidationException("贴图宽度无效。")
+            if (!clip.rotationDegrees.isFinite() || clip.rotationDegrees !in -3600.0..3600.0) {
+                throw ProjectValidationException("贴图旋转无效。")
+            }
+            if (!clip.opacity.isFinite() || clip.opacity !in 0.0..1.0) throw ProjectValidationException("贴图不透明度无效。")
+            if (!clip.cornerRadius.isFinite() || clip.cornerRadius !in 0.0..500.0 ||
+                !clip.borderWidth.isFinite() || clip.borderWidth !in 0.0..100.0 ||
+                !clip.shadowOpacity.isFinite() || clip.shadowOpacity !in 0.0..1.0 ||
+                !clip.shadowRadius.isFinite() || clip.shadowRadius !in 0.0..200.0 ||
+                !clip.shadowOffsetX.isFinite() || !clip.shadowOffsetY.isFinite() ||
+                !clip.backdropBlur.isFinite() || clip.backdropBlur !in 0.0..200.0
+            ) {
+                throw ProjectValidationException("贴图描边或阴影参数无效。")
+            }
+            if (!clip.enterDuration.isFinite() || clip.enterDuration !in 0.0..5.0 ||
+                !clip.exitDuration.isFinite() || clip.exitDuration !in 0.0..5.0
+            ) {
+                throw ProjectValidationException("贴图动画时长无效。")
+            }
         }
         val segments = timeline.sourceSequence.segmentsOrEmpty
+        if (timeline.sourceSequence is SourceSequence.Edited && segments.isEmpty()) {
+            throw ProjectValidationException("剪辑后至少需要保留一个主录屏片段。")
+        }
         val segmentIDs = mutableSetOf<String>()
         for (segment in segments) {
             if (!segmentIDs.add(segment.id)) throw ProjectValidationException("时间线存在重复的主片段。")
@@ -179,6 +252,14 @@ object ProjectValidator {
         }
     }
 
+    private fun validateOverlayTiming(timing: OverlayTiming, label: String) {
+        if (!timing.startTime.isFinite() || timing.startTime < 0 ||
+            !timing.duration.isFinite() || timing.duration <= 0
+        ) {
+            throw ProjectValidationException("${label}片段包含无效时间范围。")
+        }
+    }
+
     private fun validateTiming(timing: TransitionTiming) {
         if (!timing.startTime.isFinite() || timing.startTime < 0 ||
             !timing.duration.isFinite() || timing.duration <= 0
@@ -192,7 +273,37 @@ object ProjectValidator {
             throw ProjectValidationException("屏幕位置超出范围。")
         }
         if (target.scale <= 0 || !target.scale.isFinite()) throw ProjectValidationException("屏幕大小无效。")
-        if (target.perspective < 0 || target.perspective > 2) throw ProjectValidationException("透视强度无效。")
+        if (!target.perspective.isFinite() || target.perspective < 0 || target.perspective > 2) {
+            throw ProjectValidationException("透视强度无效。")
+        }
+        if (!target.rotationX.isFinite() || !target.rotationY.isFinite() || !target.rotationZ.isFinite()) {
+            throw ProjectValidationException("屏幕旋转角度无效。")
+        }
+    }
+
+    private fun validateReference(reference: ProjectMediaReference) {
+        requirePath(reference.relativePath)
+        if (!reference.startOffset.isFinite() || reference.startOffset < 0 ||
+            !reference.sourceStartTime.isFinite() || reference.sourceStartTime < 0
+        ) {
+            throw ProjectValidationException("项目素材时间偏移无效。")
+        }
+        reference.sourceEndTime?.let {
+            if (!it.isFinite() || it < reference.sourceStartTime) {
+                throw ProjectValidationException("项目素材结束时间无效。")
+            }
+        }
+        reference.sourceTimeScale?.let {
+            if (!it.isFinite() || it <= 0) throw ProjectValidationException("项目素材变速无效。")
+        }
+        reference.durationSeconds?.let {
+            if (!it.isFinite() || it <= 0) throw ProjectValidationException("项目素材时长无效。")
+        }
+        reference.syncAnchors.forEach { anchor ->
+            if (!anchor.sourceTime.isFinite() || anchor.sourceTime < 0 || !anchor.offset.isFinite()) {
+                throw ProjectValidationException("项目素材同步锚点无效。")
+            }
+        }
     }
 
     private fun requirePath(path: String) {

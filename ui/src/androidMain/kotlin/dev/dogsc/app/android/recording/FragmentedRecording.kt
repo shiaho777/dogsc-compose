@@ -21,9 +21,14 @@ internal class FragmentedRecordingWriter(
     fragmentDurationMs: Long = 2_000,
 ) {
     private val stream = FileOutputStream(partFile)
-    private val muxer = FragmentedMp4Muxer.Builder(stream)
-        .setFragmentDurationMs(fragmentDurationMs)
-        .build()
+    private val muxer = try {
+        FragmentedMp4Muxer.Builder(stream)
+            .setFragmentDurationMs(fragmentDurationMs)
+            .build()
+    } catch (error: Throwable) {
+        runCatching { stream.close() }
+        throw error
+    }
     private var trackIndex = -1
 
     val started: Boolean get() = trackIndex >= 0

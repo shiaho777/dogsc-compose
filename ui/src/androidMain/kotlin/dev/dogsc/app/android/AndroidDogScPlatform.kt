@@ -94,6 +94,9 @@ class AndroidDogScPlatform(
     override suspend fun loadBackgroundBitmap(project: RecorderProject): ImageBitmap? =
         repository.loadBackgroundBitmap(project)
 
+    override suspend fun loadBackgroundThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? =
+        repository.loadBackgroundThumbnail(project, atTime)
+
     override suspend fun loadWaveform(project: RecorderProject, sourceDuration: Double, buckets: Int): FloatArray? =
         waveformLoader.load(project, sourceDuration, buckets)
 
@@ -108,10 +111,28 @@ class AndroidDogScPlatform(
                 val durationMs = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 0L
                 if (durationMs <= 0) return@withContext emptyList()
+                val maxEdge = 240
                 (0 until count).mapNotNull { index ->
                     val timeUs = (durationMs * 1000L * index / count.coerceAtLeast(1))
-                    retriever.getFrameAtTime(timeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        ?.asImageBitmap()
+                    // MediaMetadataRetriever already returns the display-oriented frame.
+                    val frame = retriever.getFrameAtTime(
+                        timeUs,
+                        android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                    ) ?: return@mapNotNull null
+                    // Full-resolution keyframes for 12 slots could exceed 300 MB on 4K.
+                    val longest = maxOf(frame.width, frame.height)
+                    val scaled = if (longest > maxEdge) {
+                        val scale = maxEdge.toFloat() / longest
+                        android.graphics.Bitmap.createScaledBitmap(
+                            frame,
+                            maxOf((frame.width * scale).toInt(), 2),
+                            maxOf((frame.height * scale).toInt(), 2),
+                            true,
+                        ).also { if (it !== frame) frame.recycle() }
+                    } else {
+                        frame
+                    }
+                    scaled.asImageBitmap()
                 }
             } catch (_: Throwable) {
                 emptyList()
@@ -131,7 +152,9 @@ class AndroidDogScPlatform(
         val path = summary.thumbnailPath ?: return null
         val file = File(path)
         if (!file.exists()) return null
-        return runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
+        }
     }
 
     override suspend fun probeMedia(project: RecorderProject): MediaProbe? = repository.probe(project)
@@ -227,6 +250,10 @@ class AndroidDogScPlatform(
 
     override fun releasePreviewAudio() {
         previewAudio.release()
+    }
+
+    override fun refreshPreviewAudioVolume(project: RecorderProject, outputTime: Double) {
+        previewAudio.refreshVolume(project, outputTime)
     }
 
     override fun releasePreviewFrames() {

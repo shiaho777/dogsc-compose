@@ -71,7 +71,7 @@ class AndroidRecorderManager(
     private val mutableState = MutableStateFlow(RecorderUiState())
     val state: StateFlow<RecorderUiState> = mutableState.asStateFlow()
     private var pendingOptions: RecordingOptions? = null
-        get() = field ?: pendingOptionsStatic
+    @Volatile private var setupPending = false
     private var coordinator: RecordingCoordinator? = null
     private var projection: MediaProjection? = null
     private var projectionData: Intent? = null
@@ -86,14 +86,17 @@ class AndroidRecorderManager(
 
     fun start(options: RecordingOptions) {
         Log.d("DogScRecording", "start requested $options")
-        if (mutableState.value.isActive) return
-        val freeBytes = runCatching { StatFs(activity.filesDir.path).availableBytes }.getOrDefault(Long.MAX_VALUE)
+        if (mutableState.value.isActive || setupPending) return
+        setupPending = true
+        // Recordings are written to the app's external files dir, which can live on a different
+        // volume than filesDir (and is the volume the exporter will later need).
+        val storageRoot = activity.getExternalFilesDir(null) ?: activity.filesDir
+        val freeBytes = runCatching { StatFs(storageRoot.path).availableBytes }.getOrDefault(Long.MAX_VALUE)
         if (freeBytes < 256L * 1024 * 1024) {
             fail("存储空间不足，至少需要 256 MB")
             return
         }
         pendingOptions = options
-        pendingOptionsStatic = options
         Log.d("DogScRecording", "permissions required for $options")
         val required = buildList {
             if (options.microphone || options.systemAudio) add(Manifest.permission.RECORD_AUDIO)
@@ -111,7 +114,8 @@ class AndroidRecorderManager(
 
     fun onPermissionsResult(result: Map<String, Boolean>) {
         Log.d("DogScRecording", "permissions result=$result pending=${pendingOptions != null}")
-        val denied = result.filterValues { !it }.keys
+        // Notification denial only hides the progress notification; it must not block capture.
+        val denied = result.filterValues { !it }.keys - Manifest.permission.POST_NOTIFICATIONS
         if (denied.isNotEmpty()) {
             fail("需要录音或摄像头权限才能开始录制")
             return
@@ -129,6 +133,7 @@ class AndroidRecorderManager(
 
     fun onProjectionResult(resultCode: Int, data: Intent?) {
         Log.d("DogScRecording", "projection result code=$resultCode data=${data != null}")
+        if (mutableState.value.isActive) return
         if (resultCode != Activity.RESULT_OK || data == null) {
             fail("未授予屏幕录制权限")
             return
@@ -136,7 +141,11 @@ class AndroidRecorderManager(
         projectionResultCode = resultCode
         projectionData = data
         val options = pendingOptions ?: return
-        startForegroundService()
+        runCatching { startForegroundService(options) }.onFailure {
+            Log.e("DogScRecording", "foreground service start failed", it)
+            fail("无法启动录制服务")
+            return
+        }
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             val manager = activity.getSystemService(MediaProjectionManager::class.java)
             projection = runCatching { manager.getMediaProjection(resultCode, data) }
@@ -157,7 +166,15 @@ class AndroidRecorderManager(
                 cameraLensFacing = options.cameraLensFacing,
             )
             val metrics = activity.resources.displayMetrics
-        val bounds = activity.windowManager.currentWindowMetrics.bounds
+            val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                activity.windowManager.currentWindowMetrics.bounds
+            } else {
+                // currentWindowMetrics is API 30; minSdk is 29.
+                val displayMetrics = android.util.DisplayMetrics()
+                @Suppress("DEPRECATION")
+                activity.windowManager.defaultDisplay.getRealMetrics(displayMetrics)
+                android.graphics.Rect(0, 0, displayMetrics.widthPixels, displayMetrics.heightPixels)
+            }
         val limited = capCaptureDimensions(
             (bounds.width() / 2 * 2).coerceAtLeast(2),
             (bounds.height() / 2 * 2).coerceAtLeast(2),
@@ -195,10 +212,20 @@ class AndroidRecorderManager(
                     Log.e("DogScRecording", "coordinator error: $message")
                     mutableState.value = mutableState.value.copy(error = message)
                 },
+                onFatalError = { message ->
+                    Log.e("DogScRecording", "fatal recording error: $message")
+                    finishRecordingSession(message)
+                },
+                onCancelled = {
+                    finishRecordingSession(null)
+                },
             )
             coordinator = newCoordinator
+            setupPending = false
             newCoordinator.start()
-            activity.moveTaskToBack(true)
+            // A fatal setup error clears the active state synchronously; do not background the
+            // app after it has already reported the failure.
+            if (mutableState.value.isActive) activity.moveTaskToBack(true)
         }, 350)
     }
 
@@ -231,20 +258,36 @@ class AndroidRecorderManager(
     }
 
     fun discard() {
-        coordinator?.discard()
+        setupPending = false
+        val active = coordinator
         coordinator = null
+        active?.discard(notifyManager = false)
         projection?.stop()
         projection = null
         mutableState.value = RecorderUiState()
         stopForegroundService()
     }
 
+    /** Ends the capture session after an unrecoverable setup error or a pre-start abort. */
+    private fun finishRecordingSession(error: String?) {
+        setupPending = false
+        coordinator = null
+        projection?.stop()
+        projection = null
+        stopForegroundService()
+        mutableState.value = RecorderUiState(error = error)
+        bringAppForward()
+    }
+
     fun updateNotification(elapsed: Double, paused: Boolean, markers: Int) {
         RecordingService.update(activity, elapsed, paused, markers)
     }
 
-    private fun startForegroundService() {
-        val intent = Intent(activity, RecordingService::class.java).setAction(RecordingService.ACTION_START)
+    private fun startForegroundService(options: RecordingOptions) {
+        val intent = Intent(activity, RecordingService::class.java)
+            .setAction(RecordingService.ACTION_START)
+            .putExtra(RecordingService.EXTRA_USES_MICROPHONE, options.microphone || options.systemAudio)
+            .putExtra(RecordingService.EXTRA_USES_CAMERA, options.camera)
         ContextCompat.startForegroundService(activity, intent)
     }
 
@@ -260,6 +303,7 @@ class AndroidRecorderManager(
     }
 
     private fun fail(message: String) {
+        setupPending = false
         mutableState.value = mutableState.value.copy(error = message, isActive = false)
         pendingOptions = null
         stopForegroundService()
@@ -269,7 +313,6 @@ class AndroidRecorderManager(
         const val REQUEST_PROJECTION = 9001
         const val REQUEST_PERMISSIONS = 9002
         @Volatile var instance: AndroidRecorderManager? = null
-        @Volatile private var pendingOptionsStatic: RecordingOptions? = null
 
         /** Project currently being written; the library must not remux its live `.part` files. */
         @Volatile var activeProjectId: String? = null
@@ -288,6 +331,8 @@ internal class RecordingCoordinator(
     private val onState: (RecorderUiState) -> Unit,
     private val onCompleted: (String) -> Unit,
     private val onError: (String) -> Unit,
+    private val onFatalError: (String) -> Unit,
+    private val onCancelled: () -> Unit,
 ) {
     private val projectId = UUID.randomUUID().toString()
     private val projectDir = repository.projectDirectory(projectId)
@@ -307,6 +352,8 @@ internal class RecordingCoordinator(
     private var startedAt = SystemClock.elapsedRealtime()
     private var screenStartedAtMs = 0L
     private var cameraStartedAtMs = 0L
+    private var microphoneStartedAtMs = 0L
+    private var systemAudioStartedAtMs = 0L
     private var screenStarted = false
     private var resolvedCaptureMime: String = android.media.MediaFormat.MIMETYPE_VIDEO_AVC
     private var pausedAt: Long? = null
@@ -315,7 +362,9 @@ internal class RecordingCoordinator(
     private val markers = mutableListOf<RecordingMarker>()
     private val cameraToggles = mutableListOf<Pair<Double, Boolean>>()
     private var cameraRunning = false
+    private var cameraVisible = true
     private var stopping = false
+    @Volatile private var discarded = false
     private var rawDuration = 0.0
     private val projectTitle = Loc.t("录制") + " " +
         SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
@@ -324,7 +373,13 @@ internal class RecordingCoordinator(
         AndroidRecorderManager.activeProjectId = projectId
         // The journal must exist before the first fragment is written; otherwise a crash in the
         // first moments would leave an orphan media directory that the library cannot surface.
-        runCatching { runBlocking(Dispatchers.IO) { repository.saveProject(preliminaryProject()) } }
+        val journaled = runCatching {
+            runBlocking(Dispatchers.IO) { repository.saveProject(preliminaryProject()) }
+        }.getOrDefault(false)
+        if (!journaled) {
+            abortWithError("无法创建录制项目，请检查存储空间")
+            return
+        }
         if (options.camera) {
             val recorder = CameraRecorder(context, options.cameraLensFacing, options.cameraQuality, cameraFile)
             cameraRecorder = recorder
@@ -366,27 +421,44 @@ internal class RecordingCoordinator(
                 it.start()
             }
         }.onFailure {
-            onError("无法启动屏幕录制：${it.message}")
+            abortWithError("无法启动屏幕录制：${it.message}")
             return
         }
         if (options.microphone) {
-            micRecorder = AacAudioRecorder(context, AudioSourceKind.MICROPHONE, projection, micFile).also {
-                if (!it.start()) {
+            runCatching {
+                AacAudioRecorder(context, AudioSourceKind.MICROPHONE, projection, micFile)
+            }.onSuccess { recorder ->
+                if (runCatching { recorder.start() }.getOrDefault(false)) {
+                    micRecorder = recorder
+                    microphoneStartedAtMs = recorder.startedAtElapsedMs
+                } else {
+                    recorder.stop()
                     onError("麦克风启动失败")
-                    micRecorder = null
                 }
+            }.onFailure {
+                Log.e("DogScRecording", "microphone encoder unavailable", it)
+                onError("麦克风启动失败")
             }
         }
         if (options.systemAudio && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            systemRecorder = AacAudioRecorder(context, AudioSourceKind.SYSTEM, projection, systemFile).also {
-                if (!it.start()) {
+            runCatching {
+                AacAudioRecorder(context, AudioSourceKind.SYSTEM, projection, systemFile)
+            }.onSuccess { recorder ->
+                if (runCatching { recorder.start() }.getOrDefault(false)) {
+                    systemRecorder = recorder
+                    systemAudioStartedAtMs = recorder.startedAtElapsedMs
+                } else {
+                    recorder.stop()
                     onError("系统声音启动失败")
-                    systemRecorder = null
                 }
+            }.onFailure {
+                Log.e("DogScRecording", "system audio encoder unavailable", it)
+                onError("系统声音启动失败")
             }
         }
         if (options.touchCapture) {
-            TouchRecorder.start(pointerFile, width, height)
+            runCatching { TouchRecorder.start(pointerFile, width, height) }
+                .onFailure { Log.w("DogScRecording", "touch recorder unavailable", it) }
         }
         val memo = context.getSharedPreferences("dogsc_prefs", android.content.Context.MODE_PRIVATE)
             .getString("rec_memo", "") ?: ""
@@ -444,6 +516,8 @@ internal class RecordingCoordinator(
     }
 
     fun setCameraEnabled(enabled: Boolean) {
+        if (!cameraRunning) return
+        cameraVisible = enabled
         cameraToggles += rawElapsedSeconds(SystemClock.elapsedRealtime()) to enabled
     }
 
@@ -459,41 +533,52 @@ internal class RecordingCoordinator(
         timerJob?.cancel()
         overlay?.hide()
         overlay = null
-        runCatching { screenRecorder?.stop() }
-        runCatching { micRecorder?.stop() }
-        runCatching { systemRecorder?.stop() }
+        // CameraX's Finalize event is delivered on the main executor. Waiting for it on the
+        // main thread would always burn the full timeout and freeze the UI, so only the
+        // non-blocking stop request runs here.
         runCatching { cameraRecorder?.stop() }
-        TouchRecorder.stop()
-        val probedDuration = runCatching {
-            val retriever = android.media.MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(screenFile.absolutePath)
-                (retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) / 1000.0
-            } finally {
-                runCatching { retriever.release() }
-            }
-        }.getOrDefault(0.0)
-        val encodedDuration = screenRecorder?.lastPresentationTimeUs?.div(1_000_000.0) ?: 0.0
-        rawDuration = when {
-            probedDuration > 0.1 -> probedDuration
-            encodedDuration > 0.1 && encodedDuration < 6 * 60 * 60 -> encodedDuration
-            else -> elapsedSeconds()
-        }
+        val screen = screenRecorder
+        val mic = micRecorder
+        val system = systemRecorder
+        val camera = cameraRecorder
         screenRecorder = null
         micRecorder = null
         systemRecorder = null
         cameraRecorder = null
-        scope.launch(Dispatchers.IO) { finalizeProject() }
+        scope.launch(Dispatchers.IO) {
+            runCatching { screen?.stop() }
+            runCatching { mic?.stop() }
+            runCatching { system?.stop() }
+            runCatching { camera?.awaitFinalized() }
+            TouchRecorder.stop()
+            val probedDuration = runCatching {
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(screenFile.absolutePath)
+                    (retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) / 1000.0
+                } finally {
+                    runCatching { retriever.release() }
+                }
+            }.getOrDefault(0.0)
+            val encodedDuration = screen?.lastPresentationTimeUs?.div(1_000_000.0) ?: 0.0
+            rawDuration = when {
+                probedDuration > 0.1 -> probedDuration
+                encodedDuration > 0.1 && encodedDuration < 6 * 60 * 60 -> encodedDuration
+                else -> elapsedSeconds()
+            }
+            finalizeProject()
+        }
     }
 
     fun isPaused(): Boolean = pausedAt != null
     fun microphoneEnabled(): Boolean = micRecorder != null && micRecorder?.muted == false
     fun microphoneAvailable(): Boolean = micRecorder != null
-    fun cameraEnabled(): Boolean = cameraRunning
+    fun cameraEnabled(): Boolean = cameraRunning && cameraVisible
     fun cameraAvailable(): Boolean = cameraRunning
     fun elapsedSecondsPublic(): Double = elapsedSeconds()
 
-    fun discard() {
+    fun discard(notifyManager: Boolean = true) {
+        discarded = true
         AndroidRecorderManager.activeProjectId = null
         stopping = true
         timerJob?.cancel()
@@ -504,8 +589,36 @@ internal class RecordingCoordinator(
         runCatching { systemRecorder?.stop() }
         runCatching { cameraRecorder?.stop() }
         TouchRecorder.stop()
+        screenRecorder = null
+        micRecorder = null
+        systemRecorder = null
+        cameraRecorder = null
         projectDir.deleteRecursively()
-        onState(RecorderUiState())
+        if (notifyManager) {
+            onState(RecorderUiState())
+            onCancelled()
+        }
+    }
+
+    /** Screen capture could not start: nothing usable can be finalized, so clean up fully. */
+    private fun abortWithError(message: String) {
+        if (stopping) return
+        stopping = true
+        AndroidRecorderManager.activeProjectId = null
+        timerJob?.cancel()
+        overlay?.hide()
+        overlay = null
+        runCatching { screenRecorder?.stop() }
+        runCatching { micRecorder?.stop() }
+        runCatching { systemRecorder?.stop() }
+        runCatching { cameraRecorder?.stop() }
+        TouchRecorder.stop()
+        screenRecorder = null
+        micRecorder = null
+        systemRecorder = null
+        cameraRecorder = null
+        projectDir.deleteRecursively()
+        onFatalError(message)
     }
 
     private fun preliminaryProject(): RecorderProject = RecorderProject(
@@ -561,16 +674,21 @@ internal class RecordingCoordinator(
         val retriever = android.media.MediaMetadataRetriever()
         return try {
             retriever.setDataSource(file.absolutePath)
+            val rawWidth = retriever.extractMetadata(
+                android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH,
+            )?.toIntOrNull() ?: 0
+            val rawHeight = retriever.extractMetadata(
+                android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT,
+            )?.toIntOrNull() ?: 0
+            val rotation = retriever.extractMetadata(
+                android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION,
+            )?.toIntOrNull() ?: 0
             VideoProbe(
                 duration = (retriever.extractMetadata(
                     android.media.MediaMetadataRetriever.METADATA_KEY_DURATION,
                 )?.toLongOrNull() ?: 0L) / 1000.0,
-                width = retriever.extractMetadata(
-                    android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH,
-                )?.toIntOrNull() ?: 0,
-                height = retriever.extractMetadata(
-                    android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT,
-                )?.toIntOrNull() ?: 0,
+                width = if (rotation % 180 != 0) rawHeight else rawWidth,
+                height = if (rotation % 180 != 0) rawWidth else rawHeight,
             )
         } catch (_: Throwable) {
             VideoProbe(0.0, 0, 0)
@@ -580,6 +698,10 @@ internal class RecordingCoordinator(
     }
 
     private suspend fun finalizeProject() {
+        if (discarded) {
+            projectDir.deleteRecursively()
+            return
+        }
         try {
             val segments = buildSegments(rawDuration)
             val sourceSequence = if (segments.size == 1 && segments[0].sourceStart < 0.001 &&
@@ -629,10 +751,16 @@ internal class RecordingCoordinator(
                     )
                 },
                 microphone = micFile.takeIf { it.exists() && it.length() > 0 }?.let {
-                    ProjectMediaReference(relativePath = "media/microphone.m4a")
+                    ProjectMediaReference(
+                        relativePath = "media/microphone.m4a",
+                        startOffset = audioStartOffset(microphoneStartedAtMs),
+                    )
                 },
                 systemAudio = systemFile.takeIf { it.exists() && it.length() > 0 }?.let {
-                    ProjectMediaReference(relativePath = "media/system.m4a")
+                    ProjectMediaReference(
+                        relativePath = "media/system.m4a",
+                        startOffset = audioStartOffset(systemAudioStartedAtMs),
+                    )
                 },
                 pointerEvents = pointerFile.takeIf { it.exists() && it.length() > 0 }?.let {
                     ProjectMediaReference(relativePath = "media/pointer.jsonl")
@@ -664,14 +792,29 @@ internal class RecordingCoordinator(
                 media = media,
                 recordingMarkers = markers,
             )
+            if (discarded) {
+                projectDir.deleteRecursively()
+                return
+            }
             val saved = repository.saveProject(project)
-            if (saved) onCompleted(projectId) else onError("录制已结束，但项目保存失败")
+            if (saved && !discarded) {
+                onCompleted(projectId)
+            } else if (!discarded) {
+                // End the session instead of leaving the recording screen stuck with isActive.
+                onFatalError("录制已结束，但项目保存失败")
+            }
         } catch (error: Throwable) {
             Log.e("DogScRecording", "finalize failed", error)
-            onError("录制已结束，但项目保存失败：${error.message}")
+            if (!discarded) onFatalError("录制已结束，但项目保存失败：${error.message}")
         } finally {
             AndroidRecorderManager.activeProjectId = null
         }
+    }
+
+    /** AAC PTS starts at zero on the first sample; delay it if capture opened after the screen. */
+    private fun audioStartOffset(startedAtMs: Long): Double {
+        if (startedAtMs <= 0 || screenStartedAtMs <= 0) return 0.0
+        return ((startedAtMs - screenStartedAtMs).coerceAtLeast(0L) / 1000.0)
     }
 
     private fun buildSegments(duration: Double): List<dev.dogsc.core.model.RecordingSegment> {
@@ -708,7 +851,14 @@ internal class RecordingCoordinator(
     private fun buildCameraClips(timelineMap: TimelineMap, projectId: String): List<CameraMotionClip> {
         if (cameraToggles.isEmpty()) return emptyList()
         val events = cameraToggles.mapNotNull { (raw, enabled) ->
-            timelineMap.outputTimeForSource(raw)?.let { it to enabled }
+            val direct = timelineMap.outputTimeForSource(raw)
+            if (direct != null) {
+                direct to enabled
+            } else {
+                // The toggle happened inside a paused/cut range. The state still applies from
+                // the next visible frame, otherwise the camera would reappear after the cut.
+                timelineMap.segments.firstOrNull { raw < it.sourceEnd }?.let { it.outputStart to enabled }
+            }
         }.sortedBy { it.first }
         if (events.isEmpty()) return emptyList()
         val outputDuration = timelineMap.outputDuration

@@ -208,8 +208,7 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteDialog = false
-                    state.loadedProject?.summary?.let { state.deleteProject(it) }
-                    state.openLibrary()
+                    state.deleteCurrentProject()
                 }) { Text("删除", color = DogScColors.Danger) }
             },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("取消") } },

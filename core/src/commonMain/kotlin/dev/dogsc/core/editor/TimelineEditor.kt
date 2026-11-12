@@ -117,12 +117,13 @@ object TimelineEditor {
             kept
         }
         if (segments.isEmpty()) return null
-        val normalized = segments.sortedBy { it.sourceStart }
+        // Array order is output order. Sorting by sourceStart here silently undid any
+        // intentional segment rearrangement before the delete.
         return project.copy(
             timeline = project.timeline.copy(
-                sourceSequence = SourceSequence.Edited(normalized),
+                sourceSequence = SourceSequence.Edited(segments),
                 primarySegmentAudioOverrides = project.timeline.primarySegmentAudioOverrides
-                    .filterKeys { id -> normalized.any { it.id == id } },
+                    .filterKeys { id -> segments.any { it.id == id } },
             ),
         )
     }
@@ -138,9 +139,15 @@ object TimelineEditor {
         val segment = map.segmentAtOutputTime(outputTime) ?: return null
         val minimum = 0.08
         val delta = if (leading) byDelta else -byDelta
+        val previousSourceEnd = map.segments
+            .filter { it.id != segment.id && it.sourceEnd <= segment.sourceStart + 0.0001 }
+            .maxOfOrNull { it.sourceEnd } ?: 0.0
+        val nextSourceStart = map.segments
+            .filter { it.id != segment.id && it.sourceStart >= segment.sourceEnd - 0.0001 }
+            .minOfOrNull { it.sourceStart } ?: sourceDuration
         return if (leading) {
             val newSourceStart = (segment.sourceStart + delta * segment.playbackRate)
-                .coerceIn(0.0, segment.sourceEnd - minimum * segment.playbackRate)
+                .coerceIn(previousSourceEnd, segment.sourceEnd - minimum * segment.playbackRate)
             if (abs(newSourceStart - segment.sourceStart) < 0.0001) return null
             replaceSegment(project, map, segment.id) {
                 it.copy(
@@ -150,7 +157,7 @@ object TimelineEditor {
             }
         } else {
             val newSourceEnd = (segment.sourceEnd + delta * segment.playbackRate)
-                .coerceIn(segment.sourceStart + minimum * segment.playbackRate, sourceDuration)
+                .coerceIn(segment.sourceStart + minimum * segment.playbackRate, nextSourceStart)
             if (abs(newSourceEnd - segment.sourceEnd) < 0.0001) return null
             replaceSegment(project, map, segment.id) {
                 it.copy(sourceDuration = newSourceEnd - segment.sourceStart)

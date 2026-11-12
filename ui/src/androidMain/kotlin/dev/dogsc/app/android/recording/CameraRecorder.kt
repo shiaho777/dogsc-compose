@@ -20,6 +20,8 @@ import androidx.lifecycle.LifecycleRegistry
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class CameraRecorder(
     private val context: Context,
@@ -38,12 +40,18 @@ class CameraRecorder(
         private set
     @Volatile var startedAtElapsedMs: Long = 0L
         private set
+    @Volatile private var released = false
 
     fun start(onReady: (Boolean) -> Unit) {
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             try {
                 val cameraProvider = future.get()
+                if (released) {
+                    runCatching { cameraProvider.unbindAll() }
+                    finalized.countDown()
+                    return@addListener
+                }
                 provider = cameraProvider
                 val preferred = when (quality) {
                     "uhd" -> Quality.UHD
@@ -80,9 +88,15 @@ class CameraRecorder(
                     val fallback = if (lensFacing == 1) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
                     cameraProvider.bindToLifecycle(lifecycleOwner, fallback, capture)
                 }
+                if (released) {
+                    runCatching { cameraProvider.unbindAll() }
+                    lifecycleOwner.stop()
+                    finalized.countDown()
+                    return@addListener
+                }
                 val options = FileOutputOptions.Builder(outputFile).build()
                 val pending = capture.output.prepareRecording(context, options)
-                recording = pending.start(ContextCompat.getMainExecutor(context)) { event ->
+                val startedRecording = pending.start(ContextCompat.getMainExecutor(context)) { event ->
                     when (event) {
                         is VideoRecordEvent.Start -> {
                             started = true
@@ -96,6 +110,11 @@ class CameraRecorder(
                         else -> Unit
                     }
                 }
+                recording = startedRecording
+                if (released) {
+                    runCatching { startedRecording.stop() }
+                    runCatching { cameraProvider.unbindAll() }
+                }
             } catch (throwable: Throwable) {
                 error = throwable.message ?: "无法启动摄像头"
                 onReady(false)
@@ -104,14 +123,25 @@ class CameraRecorder(
         }, ContextCompat.getMainExecutor(context))
     }
 
+    /** Requests the stop without blocking the main thread. */
     fun stop() {
+        released = true
         runCatching { recording?.stop() }
         recording = null
-        runCatching { finalized.await(4, TimeUnit.SECONDS) }
         runCatching { provider?.unbindAll() }
         lifecycleOwner.stop()
         provider = null
         videoCapture = null
+    }
+
+    /**
+     * CameraX delivers `VideoRecordEvent.Finalize` on the main executor. Await it from IO,
+     * otherwise calling this on the main thread can only ever hit the timeout.
+     */
+    suspend fun awaitFinalized(timeoutMs: Long = 4_000) {
+        withContext(Dispatchers.IO) {
+            runCatching { finalized.await(timeoutMs, TimeUnit.MILLISECONDS) }
+        }
     }
 
     private class RecorderLifecycleOwner : LifecycleOwner {

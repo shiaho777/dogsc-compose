@@ -6,6 +6,29 @@ import android.media.MediaFormat
 
 /** Largest AVC encoder size this device reports, starting from the requested dimensions. */
 object EncoderCapabilities {
+    fun frameRate(width: Int, height: Int, desired: Int): Int {
+        val caps = avcCapabilities() ?: return desired
+        val range = runCatching { caps.getSupportedFrameRatesFor(width, height) }.getOrNull() ?: return desired
+        return desired.toDouble().coerceIn(range.lower, range.upper).toInt().coerceAtLeast(1)
+    }
+
+    fun bitrate(width: Int, height: Int, frameRate: Int, desired: Int): Int {
+        val caps = avcCapabilities() ?: return desired
+        val range = runCatching { caps.bitrateRange }.getOrNull() ?: return desired
+        return desired.coerceIn(range.lower, range.upper)
+    }
+
+    private fun avcCapabilities(): MediaCodecInfo.VideoCapabilities? {
+        val codecInfo = runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
+                info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) }
+            }
+        }.getOrNull() ?: return null
+        return runCatching {
+            codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities
+        }.getOrNull()
+    }
+
     fun clamp(width: Int, height: Int): Pair<Int, Int> {
         val codecInfo = runCatching {
             MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->

@@ -76,3 +76,11 @@ The capture setup screen binds a CameraX `Preview` to the activity lifecycle, so
 ## 17. The floating bar requests overlay permission explicitly
 
 `TYPE_APPLICATION_OVERLAY` is the only Android surface that can float over other apps during capture. A fresh install has no overlay grant, so the setup and settings screens expose a permission card with the exact consequence: without it, pause/mark/stop remain available only from the foreground notification. The overlay window carries `FLAG_KEEP_SCREEN_ON` as well as `FLAG_SECURE`, so the screen stays awake while the controls are visible and the controls never enter the recording. When the permission is denied the activity's window flag is still used while the app is foreground, and the notification remains the fallback control surface.
+
+## 18. Rotated video uses the retriever path
+
+Videos carrying a display matrix (phone portrait clips) cannot be assumed to come out of `MediaCodec` in display orientation; the Android 15 emulator returned a 180°-coded frame for a 270° matrix. `MediaMetadataRetriever` returns the display-oriented frame, so rotated sources use that path while unrotated recordings keep the persistent `PreviewFrameDecoder`. This favours correct orientation over scrubbing speed for the rarer rotated import. Dimensions are swapped for 90°/270° so the canvas aspect matches the oriented frame.
+
+## 19. Preview audio mirrors the export mixer
+
+The export mixes system and microphone as two independently muted/gained sources, so the preview cannot use a single ExoPlayer and "pick the louder source" without changing what the user hears. The editor now owns two ExoPlayers, one per source, each built from the same timeline slices and per-segment gains. Only the editor requests audio focus (once), not each player, so the platform does not pause one track while the other keeps playing. This is the Android equivalent of upstream's single mixed preview graph.

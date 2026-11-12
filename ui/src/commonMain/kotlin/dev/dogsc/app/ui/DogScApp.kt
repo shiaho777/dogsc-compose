@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import dev.dogsc.app.platform.DogScHost
 import dev.dogsc.app.ui.editor.EditorScreen
@@ -103,7 +104,7 @@ fun DogScApp(host: DogScHost) {
         val id = recorder.completedProjectId ?: return@LaunchedEffect
         if (handledRecordingResult == id) return@LaunchedEffect
         handledRecordingResult = id
-        val loaded = host.platform.loadProject(id)
+        val loaded = runCatching { host.platform.loadProject(id) }.getOrNull()
         if (loaded != null) {
             state.openRecordingResult(loaded)
         } else {
@@ -189,7 +190,18 @@ fun DogScApp(host: DogScHost) {
                 modifier = Modifier.fillMaxSize(),
             ) {
                 Box(
-                    Modifier.fillMaxSize().background(DogScColors.Scrim),
+                    Modifier
+                        .fillMaxSize()
+                        .background(DogScColors.Scrim)
+                        // A visual scrim alone does not consume touches; without this the
+                        // library/editor underneath stays clickable during load/import/delete.
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent().changes.forEach { it.consume() }
+                                }
+                            }
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(

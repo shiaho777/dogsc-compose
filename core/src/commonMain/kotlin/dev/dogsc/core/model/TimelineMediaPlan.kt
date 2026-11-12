@@ -181,7 +181,9 @@ class TimelineMediaPlan(
                     val correctedDuration = correctedEnd - correctedStart
                     if (correctedDuration <= 0.000001) return@mapNotNull null
                     TimelineMediaSlice(
-                        id = segment.id,
+                        // One segment can be split at sync anchors; slice ids must stay
+                        // unique because audio stretchers are keyed by them.
+                        id = "${segment.id}#$index",
                         segmentID = segment.id,
                         outputStart = outputStart,
                         sourceStart = correctedStart,

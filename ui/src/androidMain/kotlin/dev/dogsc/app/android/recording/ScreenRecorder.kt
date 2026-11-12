@@ -58,44 +58,72 @@ class ScreenRecorder(
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             }
-            if (runCatching {
-                    codecCandidate.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                }.isSuccess
-            ) {
+            val configured = runCatching {
+                codecCandidate.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            }.isSuccess || runCatching {
+                // Some encoders expose only CBR; retry instead of falling back to another codec.
+                format.setInteger(
+                    MediaFormat.KEY_BITRATE_MODE,
+                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
+                )
+                codecCandidate.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            }.isSuccess
+            if (configured) {
                 encoder = codecCandidate
                 resolvedMime = candidate
                 break
             }
             runCatching { codecCandidate.release() }
         }
-        codec = encoder ?: throw IllegalStateException("设备没有可用的视频编码器")
-        inputSurface = codec.createInputSurface()
-        // Fragments are flushed every 2 s, so a crash keeps all footage up to the last fragment.
-        writer = FragmentedRecordingWriter(FragmentedRecordingRecovery.partFileFor(outputFile))
-        codec.start()
+        val selected = encoder ?: throw IllegalStateException("设备没有可用的视频编码器")
+        codec = selected
+        var surface: Surface? = null
+        var createdWriter: FragmentedRecordingWriter? = null
+        try {
+            surface = selected.createInputSurface()
+            // Fragments are flushed every 2 s, so a crash keeps all footage up to the last fragment.
+            createdWriter = FragmentedRecordingWriter(FragmentedRecordingRecovery.partFileFor(outputFile))
+            selected.start()
+        } catch (error: Throwable) {
+            runCatching { createdWriter?.closeFragments() }
+            runCatching { surface?.release() }
+            runCatching { selected.stop() }
+            runCatching { selected.release() }
+            throw error
+        }
+        inputSurface = surface!!
+        writer = createdWriter!!
     }
 
     fun start() {
         running = true
-        projection.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                error = "系统已停止屏幕捕获"
-                stop()
-            }
-        }, Handler(Looper.getMainLooper()))
-        virtualDisplay = projection.createVirtualDisplay(
-            "DogSC",
-            width,
-            height,
-            densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            inputSurface,
-            null,
-            null,
-        )
-        drainThread = Thread({ drainLoop() }, "DogSC-ScreenEncoder").apply { start() }
+        try {
+            projection.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    error = "系统已停止屏幕捕获"
+                    stop()
+                }
+            }, Handler(Looper.getMainLooper()))
+            virtualDisplay = projection.createVirtualDisplay(
+                "DogSC",
+                width,
+                height,
+                densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                inputSurface,
+                null,
+                null,
+            )
+            drainThread = Thread({ drainLoop() }, "DogSC-ScreenEncoder").apply { start() }
+        } catch (error: Throwable) {
+            // The coordinator only receives the throw; release the codec/surface here so a
+            // failed virtual-display creation cannot leak an encoder.
+            runCatching { stop() }
+            throw error
+        }
     }
 
+    @Synchronized
     fun stop() {
         if (!running) return
         runCatching { virtualDisplay?.release() }

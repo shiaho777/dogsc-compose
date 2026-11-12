@@ -11,6 +11,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.os.Build
+import android.util.Log
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
@@ -40,7 +41,11 @@ class AacAudioRecorder(
     @Volatile var muted = false
     @Volatile var lastPresentationTimeUs: Long = 0
         private set
+    @Volatile var startedAtElapsedMs: Long = 0L
+        private set
     private val totalSamples = java.util.concurrent.atomic.AtomicLong(0)
+    private val scratch = ByteArray(8192 * 2)
+    @Volatile private var closed = false
 
     init {
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channels).apply {
@@ -48,10 +53,17 @@ class AacAudioRecorder(
             setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
         }
-        codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        codec.start()
-        writer = FragmentedRecordingWriter(FragmentedRecordingRecovery.partFileFor(outputFile))
+        val created = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        codec = created
+        try {
+            created.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            created.start()
+            writer = FragmentedRecordingWriter(FragmentedRecordingRecovery.partFileFor(outputFile))
+        } catch (error: Throwable) {
+            runCatching { created.stop() }
+            runCatching { created.release() }
+            throw error
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -96,12 +108,16 @@ class AacAudioRecorder(
         audioRecord = record
         running = true
         record.startRecording()
+        startedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
         thread = Thread({ pump(bufferSize) }, "DogSC-Audio-${kind.name}").apply { start() }
         return true
     }
 
     fun stop() {
-        if (!running) return
+        synchronized(this) {
+            if (closed) return
+            closed = true
+        }
         running = false
         runCatching { audioRecord?.stop() }
         runCatching { audioRecord?.release() }
@@ -123,16 +139,23 @@ class AacAudioRecorder(
         val buffer = ShortArray(bufferSize / 2)
         val silent = ShortArray(buffer.size)
         while (running) {
-            val read = audioRecord?.read(buffer, 0, buffer.size) ?: break
-            if (read <= 0) continue
-            val source = if (muted) silent else buffer
-            feedEncoder(source, read)
+            val record = audioRecord ?: break
+            val read = runCatching { record.read(buffer, 0, buffer.size) }.getOrDefault(-1)
+            if (read > 0) {
+                val source = if (muted) silent else buffer
+                feedEncoder(source, read)
+            } else if (read == 0) {
+                Thread.sleep(2)
+            } else {
+                // DEAD_OBJECT / BAD_VALUE must not turn this loop into a CPU spin.
+                Log.w("DogSCAudio", "AudioRecord read failed: $read")
+                break
+            }
         }
     }
 
     private fun feedEncoder(samples: ShortArray, count: Int) {
         var offset = 0
-        val scratch = ByteArray(8192 * 2)
         while (offset < count) {
             val inputIndex = codec.dequeueInputBuffer(10_000)
             if (inputIndex < 0) {

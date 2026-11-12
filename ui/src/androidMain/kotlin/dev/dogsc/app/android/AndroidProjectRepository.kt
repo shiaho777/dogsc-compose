@@ -48,8 +48,18 @@ class AndroidProjectRepository(private val context: Context) {
     private val root = File(context.getExternalFilesDir(null) ?: context.filesDir, "DogSC")
     private val projectsDir = File(root, "projects").apply { mkdirs() }
     private val trashDir = File(root, "trash").apply { mkdirs() }
-    private val thumbnailCache = LruCache<String, Bitmap>(24)
-    private val previewImageCache = HashMap<String, Pair<Double, ImageBitmap>>()
+    // Sticker bitmaps are ARGB and can be 16 MB each; size the cache in bytes, not entries.
+    private val thumbnailCache = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+    /** Deleted project ids stay tombstoned for this process so a late autosave cannot resurrect them. */
+    private val trashedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val previewImageCache =
+        object : LinkedHashMap<String, Pair<Double, ImageBitmap>>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Double, ImageBitmap>>): Boolean =
+                size > 8
+        }
+    private val videoDurationCache = HashMap<String, Double>()
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -58,9 +68,13 @@ class AndroidProjectRepository(private val context: Context) {
     }
 
     suspend fun listProjects(): List<ProjectSummary> = withContext(Dispatchers.IO) {
-        projectsDir.listFiles()?.filter { it.isDirectory }?.mapNotNull { dir ->
-            runCatching { loadSummary(dir) }.getOrNull()
-        } ?: emptyList()
+        // The live recording is still writing .part files; exposing it would let the library
+        // delete or "recover" a project that the encoder still owns.
+        val active = AndroidRecorderManager.activeProjectId
+        projectsDir.listFiles()
+            ?.filter { it.isDirectory && it.name != active }
+            ?.mapNotNull { dir -> runCatching { loadSummary(dir) }.getOrNull() }
+            ?: emptyList()
     }
 
     suspend fun loadProject(id: String): LoadedProject? = withContext(Dispatchers.IO) {
@@ -72,7 +86,11 @@ class AndroidProjectRepository(private val context: Context) {
             decoded.copy(title = Loc.t("导入的视频"))
         } else decoded
         val summary = loadSummary(dir) ?: return@withContext null
-        val duration = probe(File(dir, project.media?.screen?.relativePath ?: ""))?.durationSeconds ?: 0.0
+        val screenFile = File(dir, project.media?.screen?.relativePath ?: "")
+        if (!screenFile.exists() || screenFile.length() <= 0) return@withContext null
+        val duration = probe(screenFile)?.durationSeconds?.takeIf { it > 0.01 }
+            ?: project.media?.screen?.durationSeconds?.takeIf { it > 0.01 }
+            ?: return@withContext null
         val pointerEvents = readPointerEvents(project, dir)
         val camera = project.media?.camera?.let { probe(File(dir, it.relativePath)) }
         LoadedProject(
@@ -85,12 +103,14 @@ class AndroidProjectRepository(private val context: Context) {
     }
 
     suspend fun saveProject(project: RecorderProject): Boolean = withContext(Dispatchers.IO) {
+        if (isTrashed(project.id)) return@withContext false
         runCatching {
             val dir = File(projectsDir, project.id).apply { mkdirs() }
             val temp = File(dir, "project.json.tmp")
             temp.writeText(ProjectCodec.encode(project))
             val target = File(dir, "project.json")
-            if (target.exists()) target.delete()
+            // Rename is atomic on Android's filesystem; deleting the old manifest first would
+            // leave a crash window with no project.json at all.
             if (!temp.renameTo(target)) {
                 target.writeText(temp.readText())
                 temp.delete()
@@ -101,10 +121,18 @@ class AndroidProjectRepository(private val context: Context) {
     }
 
     suspend fun deleteProject(id: String): Boolean = withContext(Dispatchers.IO) {
+        if (id == AndroidRecorderManager.activeProjectId) return@withContext false
         val source = File(projectsDir, id)
         if (!source.exists()) return@withContext false
         val destination = File(trashDir, "${id}-${System.currentTimeMillis()}")
-        source.renameTo(destination)
+        val moved = source.renameTo(destination)
+        if (moved) trashedIds.add(id)
+        moved
+    }
+
+    private fun isTrashed(id: String): Boolean {
+        if (trashedIds.contains(id)) return true
+        return trashDir.listFiles()?.any { it.isDirectory && it.name.startsWith("$id-") } == true
     }
 
     suspend fun exportProjectPackage(id: String, outputUri: String): Boolean = withContext(Dispatchers.IO) {
@@ -189,8 +217,15 @@ class AndroidProjectRepository(private val context: Context) {
             createdAtEpochMs = if (decoded.createdAtEpochMs > 0) decoded.createdAtEpochMs else System.currentTimeMillis(),
         )
         val screenRelative = project.media?.screen?.relativePath
-        if (screenRelative == null || !File(root, screenRelative).exists()) {
+        val screenFile = screenRelative?.let { File(root, it) }
+        if (screenFile == null || !screenFile.exists() || screenFile.length() <= 0) {
             Log.e("DogSCImport", "missing screen $screenRelative root=$root")
+            return null
+        }
+        if (probe(screenFile)?.durationSeconds?.let { it > 0.01 } != true &&
+            project.media?.screen?.durationSeconds?.let { it > 0.01 } != true
+        ) {
+            Log.e("DogSCImport", "unreadable screen $screenFile")
             return null
         }
         val destination = File(projectsDir, newId)
@@ -241,7 +276,9 @@ class AndroidProjectRepository(private val context: Context) {
             ?: return@withContext false
         val destination = File(projectsDir, id)
         if (destination.exists()) return@withContext false
-        source.renameTo(destination)
+        val restored = source.renameTo(destination)
+        if (restored) trashedIds.remove(id)
+        restored
     }
 
     suspend fun duplicateProject(id: String): Boolean = withContext(Dispatchers.IO) {
@@ -269,16 +306,14 @@ class AndroidProjectRepository(private val context: Context) {
     }
 
     suspend fun importVideo(uri: String): LoadedProject? = withContext(Dispatchers.IO) {
-        runCatching {
-            val id = UUID.randomUUID().toString()
-            val dir = File(projectsDir, id).apply { mkdirs() }
+        val id = UUID.randomUUID().toString()
+        val dir = File(projectsDir, id)
+        var imported: LoadedProject? = null
+        try {
             val mediaDir = File(dir, "media").apply { mkdirs() }
             val target = File(mediaDir, "screen.mp4")
             copyUriToFile(Uri.parse(uri), target)
-            val info = probe(target) ?: run {
-                dir.deleteRecursively()
-                return@withContext null
-            }
+            val info = probe(target)?.takeIf { it.durationSeconds > 0.01 } ?: return@withContext null
             val displayName = queryDisplayName(Uri.parse(uri)) ?: Loc.t("导入的视频")
             val rawTitle = displayName.substringBeforeLast('.').ifBlank { Loc.t("导入的视频") }
             val title = if (rawTitle.all { it.isDigit() } || rawTitle.length > 60) Loc.t("导入的视频") else rawTitle
@@ -305,8 +340,13 @@ class AndroidProjectRepository(private val context: Context) {
             ProjectCodec.encode(project).let { File(dir, "project.json").writeText(it) }
             ensureThumbnail(project, dir)
             val summary = loadSummary(dir) ?: return@withContext null
-            LoadedProject(project, info.durationSeconds, summary, emptyList())
-        }.getOrNull()
+            imported = LoadedProject(project, info.durationSeconds, summary, emptyList())
+            imported
+        } catch (_: Throwable) {
+            null
+        } finally {
+            if (imported == null) runCatching { dir.deleteRecursively() }
+        }
     }
 
     suspend fun importSticker(projectId: String, uri: String): String? = withContext(Dispatchers.IO) {
@@ -384,6 +424,32 @@ class AndroidProjectRepository(private val context: Context) {
         }.getOrNull()
     }
 
+    suspend fun loadBackgroundThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? = withContext(Dispatchers.IO) {
+        val source = project.canvas.backgroundSource as? dev.dogsc.core.model.BackgroundSource.ProjectVideo
+            ?: return@withContext null
+        val file = File(File(projectsDir, project.id), source.relativePath)
+        if (!file.exists()) return@withContext null
+        val duration = videoDurationCache.getOrPut(file.absolutePath) {
+            runCatching {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(file.absolutePath)
+                    (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        ?.toLongOrNull() ?: 0L) / 1000.0
+                } finally {
+                    runCatching { retriever.release() }
+                }
+            }.getOrDefault(0.0)
+        }
+        val looped = if (duration > 0.01 && atTime.isFinite()) {
+            ((atTime % duration) + duration) % duration
+        } else {
+            atTime.coerceAtLeast(0.0)
+        }
+        val bitmap = decodePreviewFrame(file, looped, 720) ?: return@withContext null
+        imageFor(file, bitmap)
+    }
+
     suspend fun loadBackgroundBitmap(project: RecorderProject): ImageBitmap? = withContext(Dispatchers.IO) {
         val source = project.canvas.backgroundSource
         val relative = when (source) {
@@ -397,7 +463,19 @@ class AndroidProjectRepository(private val context: Context) {
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(file.absolutePath)
-                retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.asImageBitmap()
+                val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: return@withContext null
+                val longest = max(frame.width, frame.height)
+                val scaled = if (longest > 3_072) {
+                    val scale = 3_072f / longest
+                    Bitmap.createScaledBitmap(
+                        frame,
+                        max((frame.width * scale).toInt(), 2),
+                        max((frame.height * scale).toInt(), 2),
+                        true,
+                    ).also { if (it !== frame) frame.recycle() }
+                } else frame
+                scaled.asImageBitmap()
             } catch (_: Exception) {
                 null
             } finally {
@@ -498,6 +576,7 @@ class AndroidProjectRepository(private val context: Context) {
         try {
             retriever.setDataSource(screen.absolutePath)
             val bitmap = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return
+            // MediaMetadataRetriever already returns the display-oriented frame.
             val maxWidth = 960
             val scale = min(1f, maxWidth.toFloat() / max(bitmap.width, 1))
             val output = if (scale < 1f) {
@@ -512,14 +591,16 @@ class AndroidProjectRepository(private val context: Context) {
 
     private fun probe(file: File): MediaInfo? {
         if (!file.exists() || file.length() <= 0) return null
+        val extractor = MediaExtractor()
         return try {
-            val extractor = MediaExtractor()
             extractor.setDataSource(file.absolutePath)
             var width = 0
             var height = 0
             var duration = 0L
             var hasVideo = false
             var hasAudio = false
+            var rotation = 0
+            var rotationKnown = false
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
@@ -527,6 +608,10 @@ class AndroidProjectRepository(private val context: Context) {
                     hasVideo = true
                     width = format.getInteger(MediaFormat.KEY_WIDTH)
                     height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                    if (format.containsKey(MediaFormat.KEY_ROTATION)) {
+                        rotation = format.getInteger(MediaFormat.KEY_ROTATION)
+                        rotationKnown = true
+                    }
                     if (format.containsKey(MediaFormat.KEY_DURATION)) {
                         duration = max(duration, format.getLong(MediaFormat.KEY_DURATION))
                     }
@@ -537,11 +622,31 @@ class AndroidProjectRepository(private val context: Context) {
                     }
                 }
             }
-            extractor.release()
-            if (!hasVideo) return null
-            MediaInfo(duration / 1_000_000.0, width, height, hasAudio)
+            if (!hasVideo) {
+                null
+            } else {
+                if (!rotationKnown) rotation = videoRotation(file)
+                val displayWidth = if (rotation % 180 != 0) height else width
+                val displayHeight = if (rotation % 180 != 0) width else height
+                MediaInfo(duration / 1_000_000.0, displayWidth, displayHeight, hasAudio)
+            }
         } catch (_: Exception) {
             null
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
+    private fun videoRotation(file: File): Int {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull() ?: 0
+        } catch (_: Throwable) {
+            0
+        } finally {
+            runCatching { retriever.release() }
         }
     }
 
@@ -593,7 +698,9 @@ class AndroidProjectRepository(private val context: Context) {
 
     private fun queryExtension(uri: Uri): String? {
         val name = queryDisplayName(uri) ?: return null
-        return name.substringAfterLast('.', "").ifBlank { null }?.lowercase()
+        // Display names come from the picked provider; never let them inject path separators.
+        val extension = name.substringAfterLast('.', "").lowercase()
+        return extension.takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
     }
 
     @Serializable

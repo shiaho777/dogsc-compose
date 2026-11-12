@@ -74,7 +74,10 @@ internal class RecordingOverlay(
             AndroidRecorderManager.instance?.setCameraEnabled(next)
         }
         val memoButton = action(Loc.tShort("备忘")) { toggleMemo() }
-        val stop = action(Loc.tShort("停止")) { coordinator.stop() }.apply {
+        val stop = action(Loc.tShort("停止")) {
+            // Go through the manager so isFinishing disables discard while encoders finalize.
+            AndroidRecorderManager.instance?.stop() ?: coordinator.stop()
+        }.apply {
             setTextColor(Color.rgb(255, 120, 112))
         }
         container.addView(dot)

@@ -3,7 +3,7 @@
 Living comparison against upstream [DogSC](https://github.com/laogou717/dogsc).
 Status values: **Done**, **Partial**, **Gap**. A feature is Done only when it has a user-visible path and a verification method; architecture alone does not count.
 
-Last updated: 2026-11-10.
+Last updated: 2026-11-12.
 
 ## Recording
 
@@ -41,7 +41,7 @@ Last updated: 2026-11-10.
 
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
-| Filmstrip | 12 cached source frames, mapped through timeline cuts/retime | Done | Emulator: the primary track row has 42 distinct coarse colours and a per-channel std of ~40 (real thumbnails), while an empty track row has 2 colours and std ~0 |
+| Filmstrip | 12 cached source frames, capped at 240 px and oriented from video metadata | Done | Emulator: the primary track row has real thumbnails; the 4K/portrait memory blow-up was fixed by scaling retriever frames to 240 px before publishing them |
 | Waveform | Decodes AAC/PCM to 700 peaks; toggle in timeline | Done | Real peaks aligned through `TimelineMap` |
 | Zoom track | Mint clips, move/resize/select | Done | Emulator: dragging the clip middle moved 0.06 → 2.19 s; trailing resize 3.37 → 4.28 s; leading resize 3.10 → 3.27 s. Audit fixed drags being cancelled after the first delta (`pointerInput` keyed on `project`) and per-event deltas replacing total travel |
 | Screen 3D track | Clips with timing, position, scale, tilt X/Y, rotate Z, perspective, transition duration/lead-in | Done | Core + UI; `ScreenProjectionTest` and emulator preview/export corner parity ≤0.006; inspector exposes the animation timing |
@@ -53,7 +53,7 @@ Last updated: 2026-11-10.
 | Timeline zoom | +/- / fit buttons and two-finger pinch; playback auto-follow | Done | `PinchInjectionTest` injects a real two-finger gesture through `UiAutomation`; before/after screenshots show the tick spacing grow from ~145 px/s to ~350 px/s. Playback scrolls the timeline to keep the playhead visible (verified at 10.5 s on a 34.6 s project) |
 | Hover preview | Playhead scrubbing updates the preview | Done | Touch platform substitute for pointer hover |
 | Cut-boundary restore affordance | Menu action at playhead | Done | Touch has no hover/right-click; the restore menu acts on the playhead and lists the same operations |
-| Editor audio preview | ExoPlayer plays the primary audio through one clipped item per timeline slice; volume follows the project; uniform speed becomes the player rate | Done | Emulator: `dumpsys audio` shows a 48 kHz `AudioTrack` in `state:started` while playing and `state:paused` after Space |
+| Editor audio preview | Two ExoPlayers (system/screen + microphone), one clipped item per timeline slice, per-segment mute/volume, audio-focus ownership and pitch-preserving slice rates | Done | Emulator: playing the camera project with both recorded sources showed two 48 kHz `AudioTrack`s in `state:started` from the app process; Space pauses both. The session requests audio focus once instead of letting two players fight over it |
 | Keyboard shortcuts | Physical keyboard: Space play/pause, ←/→ 1 frame, Shift+←/→ 5 frames, S split, Delete/Backspace delete selection, Ctrl/⌘+Z undo, Ctrl/⌘+Shift+Z redo, Ctrl/⌘+S save; the reference sheet lists them | Done | Emulator with `adb shell input keyevent/keycombination`: Space toggled playback (00:00 → 01:74 while playing), arrows stepped 1 frame, S split, Ctrl+Z removed the split (3 → 2 segments), Ctrl+Shift+Z restored it (2 → 3) |
 
 ## Motion and cursor
@@ -79,13 +79,14 @@ Last updated: 2026-11-10.
 | Upstream capability | Android implementation | Status | Evidence / gap |
 |---|---|---|---|
 | Adaptive/fixed/custom ratios | Core + picker | Done | Core dimensions test |
+| Rotated imported sources | Extractor/retriever rotation is applied to probe dimensions, preview, filmstrip and export; images honour EXIF | Done | Emulator: imported a 640×360 clip carrying a 90° display matrix; the project reports 360×640, the preview and filmstrip show the display orientation, and the exported H.264 is 360×640 with the same orientation. `MediaMetadataRetriever` already returns oriented video frames, so they are no longer rotated twice |
 | Source/1080p/1440p/4K | Core + export picker | Done | 1080p and 4K export paths verified; 1440p uses the same canvas-dimension and encoder-clamp path |
 | Crop | Four-edge crop editor | Done | `sourceResolutionRespectsCrop`; four-edge crop editor shares the source crop with the renderer |
 | Padding/content position/scale | Sliders + position pad | Done | `aspectFitAccountsForPadding` and `screenMotionScaleAndPositionAreResolved` |
 | Corner/border/shadow/inset opacity | Sliders + color palette | Done | Audit found the color palette passed ARGB (`0xFF…`) to the 24-bit `HexColor`, so opening the 画面 inspector crashed every time; fixed and re-verified on the emulator |
 | Background patterns | Five presets | Done | Canvas renderer |
 | Dynamic backgrounds | Three presets with time-driven drift/dot motion | Done | Preview and export share `drawDynamic` + `scene.time`. Emulator: exported 10.8 s of the cyber-drift preset; the border background is the expected brown at 0.2 s and 9.8 s, and thousands of border pixels differ between the two frames. Fixed a stale paint alpha that made exported backgrounds black after the first frame |
-| Custom image/video background | SAF import + cover draw; preview and export both center-crop, blur with a ×18 downscale and the same dimming factor; still images are capped at 3072 px for memory safety | Done | Preview now uses the export's cover math, blur and dimming; video backgrounds decode per frame |
+| Custom image/video background | SAF import + cover draw; preview and export both center-crop, blur with a ×18 downscale and the same dimming factor; still images are capped at 3072 px for memory safety | Done | Preview now uses the export's cover math, blur and dimming; video backgrounds decode the frame at the playhead (looping on the video duration), so animation matches export |
 | Window/browser frames | Chrome + title/address + scale/radius | Done | Emulator: `browserLight` preview and exported frame both show traffic lights, title/address bar and rounded chrome |
 | Phone/tablet frames | Adaptive device bezel | Done | Emulator: `devicePhone` preview draws the bezel, speaker slot and rounded content; the chrome scene is shared with export |
 | Stickers | Import, layer order, transform, animation, hide screen/camera | Done | Core fade test; import/transform/animation UI; preview/export share `FrameScene`; large images are capped at 2048 px |
@@ -102,7 +103,7 @@ Last updated: 2026-11-10.
 | Audio-only header | Export sheet shows duration · M4A and hides the video encoder-limit note | Done | Emulator: selecting Audio only changes the header to `duration · M4A` and suppresses the video encoder-limit note |
 | 30/60 FPS | Encoder settings | Done | 30 fps export `r_frame_rate=30/1`; 60 fps long/camera exports `r_frame_rate=60/1` |
 | Source/1080p/1440p/4K | Canvas dimensions + encoder, clamped to the encoder's reported maximum | Done | Emulator: a 4K request was clamped to 1620×910 (software AVC encoder), exported 10.28 s H.264/AAC in ~6 s; the export sheet shows the effective size and an encoder-limit note |
-| Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur; preview audio applies each slice's speed on item transitions | Done | 2D, 3D, stickers, mosaic and custom backgrounds match; cuts and per-clip volume were already honoured |
+| Preview/export consistency | Shared `FrameScene` + shared 3D homography + matching mosaic/background blur; screen/camera frames are resolved through the same `TimelineMap` and media placement as export; animated video backgrounds and both audio sources are previewed | Done | 2D, 3D, stickers, mosaic and custom backgrounds match. Audit fixed preview decoding at the raw playhead instead of the mapped source time, camera lead/sync offsets, still-only video backgrounds, and single-source audio. Core test `editedTimelineMapsPlayheadToTrimmedSourceTime` locks the output→source mapping; emulator `dumpsys audio` shows both audio tracks playing |
 | Estimated size/ETA | Bitrate policy + live progress | Done | Header and size follow the current resolution/FPS selection and the real source size (`ExportEstimatorTest` 4/4; emulator: 原始素材 1280×720 ≈17.5 MB, 1080p ≈30 MB, 4K ≈119 MB) |
 | Export completion state | Progress cleared on success; result card with share/re-export | Done | Emulator: after export the sheet shows 导出完成 · 14.7 MB · 分享 · 重新导出 |
 | Cancel export | Volatile cancel flag + UI | Done | Cancelled at frame 0: progress cleared, no completion card, and the partial SAF document was deleted |
@@ -124,7 +125,7 @@ Last updated: 2026-11-10.
 | Multi-window/tablet layout | Adaptive inspector rail at ≥880 dp | Done | Emulator at 1600×2560 / density 240: the inspector rail sits at x 1138–1553 and the timeline keeps its controls |
 | Automated UI tests | Instrumentation test for multi-touch timeline zoom | Done | `androidApp/src/androidTest/.../PinchInjectionTest.kt`; `am instrument` passes on the emulator |
 | First-use coach-mark tour | Live spotlight tour with target registry; steps for library, recorder and editor; persisted seen flags and replay in Settings | Done | Emulator: the library tour dims the screen, outlines the Start recording button, advances to Import video and Recent projects; the same overlay and target registry are wired to recorder/editor targets |
-| Project source/package exchange | ZIP export/import and direct project-folder import (project.json + media/thumbnail); upstream Swift JSON compatibility mapper | Done | Emulator: exported a 3.6 MB `.zip`, imported it from the library header, and got an 18th project with a new id/title/media. Also imported a synthetic upstream package (Chinese enum raw values, `BackgroundSource` kind/preset, `devicePhonePortrait`, numeric frame rate); it appeared as the 20th project. The import menu now accepts a project folder directly (SAF tree) as well as a ZIP |
+| Project source/package exchange | ZIP export/import and direct project-folder import (project.json + media/thumbnail); upstream Swift JSON compatibility mapper; imported paths and enum values are validated before opening | Done | Emulator: exported a 3.6 MB `.zip`, imported it from the library header, and got an 18th project with a new id/title/media. Also imported a synthetic upstream package (Chinese enum raw values, `BackgroundSource` kind/preset, `devicePhonePortrait`, numeric frame rate); it appeared as the 20th project. The import menu now accepts a project folder directly (SAF tree) as well as a ZIP. Validation now rejects project-relative background traversal, non-finite overlay/media references and invalid camera values |
 | Capture codec/resolution limit | H.264/HEVC codec choice, native/4K/1080p capture limit and encoder-size clamping; project codec is probed from the actual file | Partial | Emulator: 1080p limit on a 1080×2400 display recorded 864×1920 H.264 and stored `captureResolutionLimit=1080p`. With HEVC requested, the emulator encoder still fell back and the project correctly recorded `captureCodec=h264` after probing the file; an actual HEVC recording is still unobserved |
 | HDR/color-profile export | SDR desktop BT.709 | Done | Upstream `DirectExportPipeline` also constructs `CoreImageFrameColorProfile(contract: .sdrDesktop)` for its export path; the `FrameScene.isHDR` flag is not used there. Android's SDR 8-bit export therefore matches the shipped upstream behavior |
 | Floating camera preview while recording | Live preview in setup; camera PiP added in post | Done | Android MediaProjection would capture a floating preview; a `FLAG_SECURE` preview would punch a black hole in the recording. The setup preview is the platform equivalent |
@@ -137,8 +138,10 @@ Last updated: 2026-11-10.
 
 ## Verification log
 
-- `./gradlew :core:jvmTest` — 19 tests, green.
-- `./gradlew :androidApp:assembleRelease` — green.
+- `./gradlew :core:jvmTest` — 38 tests, green.
+- `./gradlew :ui:testDebugUnitTest` — 2 tests, green.
+- `./gradlew :androidApp:assembleRelease` and `:androidApp:assembleDebugAndroidTest` — green.
+- `PinchInjectionTest` — 1 instrumentation test, green on `emulator-5556`.
 - Emulator (Android 15, hardware GPU): cold start 1.6 s release, 1.8 s on second run.
 - Recorded 90.78 s screen + 88.81 s system audio; project reopened with correct duration.
 - Exported a 12.03 s 1920×1080/30 H.264+AAC MP4; frame extraction verified background, card, rounded corners and shadow.
@@ -153,4 +156,5 @@ Last updated: 2026-11-10.
 2. Physical-device camera verification: the emulator records through both virtual lenses; real sensors, focus/exposure and rotation still need hardware.
 3. Continuous touch motion requires Android 14+; older versions use click/scroll anchors (documented in DECISIONS).
 4. Upstream `.dogscproject` is covered through the compatibility mapper when zipped. Remaining device/encoder checks: actual HEVC capture, camera quality 480p/1080p, and sticker/motion/focus inspector screenshots.
-5. `.dogscproject` compatibility and iOS/desktop/web targets remain outside this Android-first round.
+5. Rotated video is decoded through `MediaMetadataRetriever` because the emulator's MediaCodec path returned an unexpected coded orientation; this is correct but slower for scrubbing rotated imports. Unrotated recordings keep the persistent MediaCodec path.
+6. iOS/desktop/web targets remain outside this Android-first round.

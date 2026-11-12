@@ -15,6 +15,9 @@ import dev.dogsc.app.ui.Loc
 import kotlin.math.roundToInt
 
 class RecordingService : Service() {
+    private var usesMicrophone = false
+    private var usesCamera = false
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
@@ -22,6 +25,10 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_START -> {
+                usesMicrophone = intent.getBooleanExtra(EXTRA_USES_MICROPHONE, false)
+                usesCamera = intent.getBooleanExtra(EXTRA_USES_CAMERA, false)
+            }
             ACTION_STOP -> {
                 // Keep the foreground service alive until the coordinator has
                 // stopped encoders and saved the project. The manager sends a
@@ -42,14 +49,22 @@ class RecordingService : Service() {
         }
         val notification = buildNotification(0.0, false, 0)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            if (checkSelfPermission(android.Manifest.permission.CAMERA) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                // CameraX runs while the app is in the background; Android 14+ only allows
-                // that from a foreground service that declares the camera type.
-                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Microphone/camera FGS types were introduced in API 30; on API 29 passing
+                // those bits to startForeground is invalid.
+                if (usesMicrophone && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                }
+                if (usesCamera && checkSelfPermission(android.Manifest.permission.CAMERA) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    // CameraX runs while the app is in the background; Android 14+ only allows
+                    // that from a foreground service that declares the camera type.
+                    types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                }
             }
             startForeground(NOTIFICATION_ID, notification, types)
         } else {
@@ -114,6 +129,8 @@ class RecordingService : Service() {
         const val ACTION_PAUSE = "dev.dogsc.action.PAUSE"
         const val ACTION_RESUME = "dev.dogsc.action.RESUME"
         const val ACTION_MARKER = "dev.dogsc.action.MARKER"
+        const val EXTRA_USES_MICROPHONE = "dev.dogsc.extra.MICROPHONE"
+        const val EXTRA_USES_CAMERA = "dev.dogsc.extra.CAMERA"
 
         fun update(context: Context, elapsed: Double, paused: Boolean, markers: Int) {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return

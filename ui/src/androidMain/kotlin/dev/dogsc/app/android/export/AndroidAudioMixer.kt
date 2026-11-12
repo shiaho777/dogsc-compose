@@ -55,10 +55,11 @@ class AndroidAudioMixer(
         onProgress: (ExportProgress) -> Unit,
         trimStart: Double = 0.0,
         trimEnd: Double? = null,
+        isCancelled: () -> Boolean = { false },
     ): Boolean {
         val sources = mutableListOf<AudioSource>()
         try {
-            return mixSources(project, sourceDuration, timelineMap, output, onProgress, trimStart, trimEnd, sources)
+            return mixSources(project, sourceDuration, timelineMap, output, onProgress, trimStart, trimEnd, sources, isCancelled)
         } finally {
             // Decoders are a scarce system resource; release them on success, failure and cancel.
             for (source in sources) {
@@ -77,6 +78,7 @@ class AndroidAudioMixer(
         trimStart: Double,
         trimEnd: Double?,
         sources: MutableList<AudioSource>,
+        isCancelled: () -> Boolean,
     ): Boolean {
         val dir = repository.projectDirectory(project.id)
         val screenFile = project.media?.screen?.let { File(dir, it.relativePath) }
@@ -95,7 +97,11 @@ class AndroidAudioMixer(
                     sourceAvailableDuration = track.durationSeconds,
                     timelineDuration = sourceDuration,
                 )
-                val plan = TimelineMediaPlan.auxiliary(timelineMap, placement)
+                val plan = TimelineMediaPlan.auxiliary(
+                    timelineMap,
+                    placement,
+                    syncAnchors = systemReference?.syncAnchors ?: emptyList(),
+                )
                 sources += AudioSource(track, true, plan.slices)
             }
         } else if (screenFile != null && screenFile.exists()) {
@@ -112,7 +118,11 @@ class AndroidAudioMixer(
                     sourceAvailableDuration = track.durationSeconds,
                     timelineDuration = sourceDuration,
                 )
-                val plan = TimelineMediaPlan.auxiliary(timelineMap, placement)
+                val plan = TimelineMediaPlan.auxiliary(
+                    timelineMap,
+                    placement,
+                    syncAnchors = microphoneReference?.syncAnchors ?: emptyList(),
+                )
                 sources += AudioSource(track, false, plan.slices)
             }
         }
@@ -124,9 +134,16 @@ class AndroidAudioMixer(
         val simplePrimary = timelineMap.segments.size == 1 &&
             timelineMap.segments[0].sourceStart < 0.001 &&
             kotlin.math.abs(timelineMap.segments[0].playbackRate - 1.0) < 0.001
+        val singleReference = when {
+            systemFile?.exists() == true -> systemReference
+            microphoneFile?.exists() == true -> microphoneReference
+            else -> project.media?.screen
+        }
+        val hasStartOffset = (singleReference?.startOffset ?: 0.0) > 0.001
         if (sources.size == 1 &&
             singleIsAudible &&
             simplePrimary &&
+            !hasStartOffset &&
             project.timeline.primarySegmentAudioOverrides.isEmpty() &&
             project.audio.systemVolume >= 0.999 &&
             project.audio.microphoneVolume >= 0.999
@@ -138,13 +155,16 @@ class AndroidAudioMixer(
                 else -> null
             }
             if (sourceFile != null) {
-                val copied = runCatching { copyAudioTrack(sourceFile, output, trimStart, trimEnd) }.getOrDefault(false)
+                val copied = runCatching {
+                    copyAudioTrack(sourceFile, output, trimStart, trimEnd, isCancelled)
+                }.getOrDefault(false)
                 if (copied) {
                     Log.d("DogSCAudio", "copied audio track size=${output.length()}")
                     return true
                 }
             }
         }
+        if (isCancelled()) return false
 
         val duration = timelineMap.outputDuration
         if (duration <= 0.01) return false
@@ -156,10 +176,12 @@ class AndroidAudioMixer(
         val mixBuffer = FloatArray(chunkFrames * outputChannels)
         val sourceBuffer = FloatArray(chunkFrames * outputChannels)
 
+        try {
         FileOutputStream(wavFile).use { stream ->
             writeWavHeader(stream, totalFrames)
             var written = 0
             while (written < totalFrames) {
+                if (isCancelled()) return false
                 val frames = min(chunkFrames, totalFrames - written)
                 java.util.Arrays.fill(mixBuffer, 0f)
                 val chunkStart = startTime + written.toDouble() / outputSampleRate
@@ -226,10 +248,13 @@ class AndroidAudioMixer(
             }
         }
         Log.d("DogSCAudio", "wav done size=${wavFile.length()}")
-        encodeWavToM4a(wavFile, output)
+        encodeWavToM4a(wavFile, output, isCancelled)
         Log.d("DogSCAudio", "encode done size=${output.length()}")
-        wavFile.delete()
         return true
+        } finally {
+            // The intermediate WAV is uncompressed (hundreds of MB for long recordings).
+            runCatching { wavFile.delete() }
+        }
     }
 
     private fun volumesAt(project: RecorderProject, timelineMap: TimelineMap, time: Double): Pair<Double, Double> {
@@ -242,7 +267,13 @@ class AndroidAudioMixer(
         return system to mic
     }
 
-    private fun copyAudioTrack(source: File, output: File, trimStart: Double, trimEnd: Double?): Boolean {
+    private fun copyAudioTrack(
+        source: File,
+        output: File,
+        trimStart: Double,
+        trimEnd: Double?,
+        isCancelled: () -> Boolean,
+    ): Boolean {
         val extractor = MediaExtractor()
         val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         try {
@@ -263,6 +294,7 @@ class AndroidAudioMixer(
             val endUs = ((trimEnd ?: Double.MAX_VALUE) * 1_000_000).toLong()
             var wrote = false
             while (true) {
+                if (isCancelled()) return false
                 buffer.clear()
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break
@@ -307,7 +339,7 @@ class AndroidAudioMixer(
      * priming packets are dropped and the remaining packets are re-stamped from zero. Without this
      * the whole audio track lands ~43 ms after the video.
      */
-    private fun encodeWavToM4a(wav: File, output: File) {
+    private fun encodeWavToM4a(wav: File, output: File, isCancelled: () -> Boolean) {
         val primingPackets = aacPrimingPackets()
         val bytesPerFrame = outputChannels * 2
         val pcmFrames = ((wav.length() - 44).coerceAtLeast(0) / bytesPerFrame)
@@ -325,6 +357,7 @@ class AndroidAudioMixer(
                 file.seek(44)
                 encodeAac(
                     readPcm = { bytes ->
+                        if (isCancelled()) return@encodeAac -1
                         val read = file.read(bytes)
                         if (read > 0) {
                             read
@@ -679,18 +712,27 @@ private class PcmTrack(file: File) {
     private val bufferInfo = MediaCodec.BufferInfo()
 
     init {
-        extractor.setDataSource(file.absolutePath)
-        trackIndex = (0 until extractor.trackCount).firstOrNull {
-            extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-        } ?: error("没有音频轨道")
-        extractor.selectTrack(trackIndex)
-        val format = extractor.getTrackFormat(trackIndex)
-        durationSeconds = (format.getLongOrDefault(MediaFormat.KEY_DURATION, 0L)) / 1_000_000.0
-        sourceSampleRate = format.getIntegerOrDefault(MediaFormat.KEY_SAMPLE_RATE, 48_000)
-        sourceChannels = format.getIntegerOrDefault(MediaFormat.KEY_CHANNEL_COUNT, 2)
-        codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME) ?: "audio/mp4a-latm")
-        codec.configure(format, null, null, 0)
-        codec.start()
+        var created: MediaCodec? = null
+        try {
+            extractor.setDataSource(file.absolutePath)
+            trackIndex = (0 until extractor.trackCount).firstOrNull {
+                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+            } ?: error("没有音频轨道")
+            extractor.selectTrack(trackIndex)
+            val format = extractor.getTrackFormat(trackIndex)
+            durationSeconds = (format.getLongOrDefault(MediaFormat.KEY_DURATION, 0L)) / 1_000_000.0
+            sourceSampleRate = format.getIntegerOrDefault(MediaFormat.KEY_SAMPLE_RATE, 48_000)
+            sourceChannels = format.getIntegerOrDefault(MediaFormat.KEY_CHANNEL_COUNT, 2)
+            created = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME) ?: "audio/mp4a-latm")
+            created.configure(format, null, null, 0)
+            created.start()
+            codec = created
+        } catch (error: Throwable) {
+            runCatching { created?.stop() }
+            runCatching { created?.release() }
+            runCatching { extractor.release() }
+            throw error
+        }
     }
 
     /** Reads [frames] output frames starting at [sourceTime], advancing [rate] source seconds per output second. */
