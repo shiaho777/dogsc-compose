@@ -158,10 +158,16 @@ class AndroidRecorderManager(
             )
             val metrics = activity.resources.displayMetrics
         val bounds = activity.windowManager.currentWindowMetrics.bounds
-        val (width, height) = capCaptureDimensions(
+        val limited = capCaptureDimensions(
             (bounds.width() / 2 * 2).coerceAtLeast(2),
             (bounds.height() / 2 * 2).coerceAtLeast(2),
             options.captureResolutionLimit,
+        )
+        val captureMime = dev.dogsc.app.android.recording.CaptureEncoderCapabilities.mimeFor(options.captureCodec)
+        val (width, height) = dev.dogsc.app.android.recording.CaptureEncoderCapabilities.clamp(
+            captureMime,
+            limited.first,
+            limited.second,
         )
             val newCoordinator = RecordingCoordinator(
                 context = activity,
