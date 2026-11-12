@@ -233,9 +233,14 @@ class AndroidProjectRepository(private val context: Context) {
             Log.e("DogSCImport", "copy failed $root -> $destination")
             return null
         }
-        File(destination, "project.json").writeText(ProjectCodec.encode(project))
-        ensureThumbnail(project, destination)
-        return newId
+        return try {
+            File(destination, "project.json").writeText(ProjectCodec.encode(project))
+            ensureThumbnail(project, destination)
+            newId
+        } catch (_: Throwable) {
+            runCatching { destination.deleteRecursively() }
+            null
+        }
     }
 
     private fun copyDocumentTree(source: DocumentFile, destination: File) {

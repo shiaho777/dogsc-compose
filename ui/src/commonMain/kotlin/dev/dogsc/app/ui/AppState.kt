@@ -307,6 +307,8 @@ class DogScAppState(
     fun refreshProjects() {
         val token = ++projectsRefreshToken
         scope.launch {
+            // The coroutine can start after a newer refresh already finished.
+            if (token != projectsRefreshToken) return@launch
             isLoadingProjects = true
             val fresh = runCatching { platform.listProjects() }
                 .getOrDefault(emptyList())
@@ -324,7 +326,7 @@ class DogScAppState(
         scope.launch {
             isBusy = true
             busyMessage = "正在恢复项目"
-            val restored = platform.restoreProject(summary.id)
+            val restored = runCatching { platform.restoreProject(summary.id) }.getOrDefault(false)
             isBusy = false
             if (restored) {
                 refreshProjects()
@@ -339,7 +341,7 @@ class DogScAppState(
         scope.launch {
             isBusy = true
             busyMessage = "正在清空回收站"
-            val cleared = platform.clearTrash()
+            val cleared = runCatching { platform.clearTrash() }.getOrDefault(false)
             isBusy = false
             refreshProjects()
             if (cleared) showToast("回收站已清空") else showToast("清空失败", isError = true)
@@ -426,6 +428,7 @@ class DogScAppState(
         val token = ++projectLoadToken
         stopPlayback()
         scope.launch {
+            if (token != projectLoadToken) return@launch
             isBusy = true
             busyMessage = "正在载入项目"
             val loaded = runCatching { platform.loadProject(summary.id) }.getOrNull()
@@ -458,6 +461,7 @@ class DogScAppState(
         val token = ++projectLoadToken
         stopPlayback()
         scope.launch {
+            if (token != projectLoadToken) return@launch
             isBusy = true
             busyMessage = "正在导入视频"
             val loaded = runCatching { platform.importVideo(uri) }.getOrNull()
@@ -1312,7 +1316,7 @@ class DogScAppState(
         scope.launch {
             isBusy = true
             busyMessage = "正在删除项目"
-            val deleted = platform.deleteProject(summary.id)
+            val deleted = runCatching { platform.deleteProject(summary.id) }.getOrDefault(false)
             isBusy = false
             if (deleted) {
                 refreshProjects()
@@ -1338,7 +1342,7 @@ class DogScAppState(
         scope.launch {
             isBusy = true
             busyMessage = "正在删除项目"
-            val deleted = platform.deleteProject(summary.id)
+            val deleted = runCatching { platform.deleteProject(summary.id) }.getOrDefault(false)
             isBusy = false
             if (deleted) {
                 projectLoadToken++
@@ -1371,7 +1375,7 @@ class DogScAppState(
                     return@launch
                 }
             }
-            val duplicated = platform.duplicateProject(summary.id)
+            val duplicated = runCatching { platform.duplicateProject(summary.id) }.getOrDefault(false)
             isBusy = false
             if (duplicated) {
                 refreshProjects()
@@ -1386,7 +1390,7 @@ class DogScAppState(
         scope.launch {
             isBusy = true
             busyMessage = "正在导出项目"
-            val exported = platform.exportProjectPackage(summary.id, outputUri)
+            val exported = runCatching { platform.exportProjectPackage(summary.id, outputUri) }.getOrDefault(false)
             isBusy = false
             if (exported) showToast("项目已导出") else showToast("导出失败", isError = true)
         }
@@ -1396,7 +1400,7 @@ class DogScAppState(
         scope.launch {
             isBusy = true
             busyMessage = "正在导入项目"
-            val id = platform.importProjectPackage(uri)
+            val id = runCatching { platform.importProjectPackage(uri) }.getOrNull()
             isBusy = false
             if (id != null) {
                 refreshProjects()
@@ -1411,7 +1415,7 @@ class DogScAppState(
         scope.launch {
             isBusy = true
             busyMessage = "正在导入项目"
-            val id = platform.importProjectDirectory(uri)
+            val id = runCatching { platform.importProjectDirectory(uri) }.getOrNull()
             isBusy = false
             if (id != null) {
                 refreshProjects()
@@ -1426,7 +1430,7 @@ class DogScAppState(
         val clean = title.trim().take(200)
         if (clean.isBlank() || clean == summary.title) return
         scope.launch {
-            if (platform.renameProject(summary.id, clean)) {
+            if (runCatching { platform.renameProject(summary.id, clean) }.getOrDefault(false)) {
                 refreshProjects()
                 showToast("项目已重命名")
             } else {

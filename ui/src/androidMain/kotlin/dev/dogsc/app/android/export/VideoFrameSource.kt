@@ -2,7 +2,6 @@ package dev.dogsc.app.android.export
 
 import android.graphics.Bitmap
 import android.graphics.ImageFormat
-import android.graphics.Matrix
 import android.media.Image
 import android.media.ImageReader
 import android.media.MediaCodec
