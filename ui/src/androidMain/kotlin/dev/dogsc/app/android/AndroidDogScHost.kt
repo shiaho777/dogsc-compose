@@ -22,6 +22,7 @@ class AndroidDogScHost(
 ) : DogScHost {
     var launchPickVideo: (() -> Unit)? = null
     var launchPickProject: (() -> Unit)? = null
+    var launchPickProjectDirectory: (() -> Unit)? = null
     var launchCreateArchive: ((String) -> Unit)? = null
     var launchPickImage: (() -> Unit)? = null
     var launchCreateDocument: ((fileName: String, mimeType: String) -> Unit)? = null
@@ -31,6 +32,7 @@ class AndroidDogScHost(
     private var pendingPickImage: ((String?) -> Unit)? = null
     private var pendingCreateDocument: ((String?) -> Unit)? = null
     private var pendingPickProject: ((String?) -> Unit)? = null
+    private var pendingPickProjectDirectory: ((String?) -> Unit)? = null
     private var pendingCreateArchive: ((String?) -> Unit)? = null
 
     companion object {
@@ -64,6 +66,11 @@ class AndroidDogScHost(
         launchPickProject?.invoke() ?: onResult(null)
     }
 
+    override fun pickProjectDirectory(onResult: (String?) -> Unit) {
+        pendingPickProjectDirectory = onResult
+        launchPickProjectDirectory?.invoke() ?: onResult(null)
+    }
+
     override fun createProjectArchive(suggestedName: String, onResult: (String?) -> Unit) {
         pendingCreateArchive = onResult
         launchCreateArchive?.invoke(suggestedName) ?: onResult(null)
@@ -94,6 +101,12 @@ class AndroidDogScHost(
     fun handlePickedProject(uri: String?) {
         val callback = pendingPickProject
         pendingPickProject = null
+        callback?.invoke(uri)
+    }
+
+    fun handlePickedProjectDirectory(uri: String?) {
+        val callback = pendingPickProjectDirectory
+        pendingPickProjectDirectory = null
         callback?.invoke(uri)
     }
 

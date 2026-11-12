@@ -88,6 +88,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 private val RulerHeight = 24.dp
 private val PrimaryHeight = 46.dp
@@ -115,6 +116,7 @@ fun TimelinePanel(
     val project = state.project ?: return
     val textMeasurer = rememberTextMeasurer()
     val scroll = rememberScrollState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var showAddMenu by remember { mutableStateOf(false) }
     var showRestoreMenu by remember { mutableStateOf(false) }
 
@@ -275,6 +277,20 @@ fun TimelinePanel(
                         state = state,
                         textMeasurer = textMeasurer,
                         contentWidth = contentWidth,
+                        onPinchScale = { factor, focusX ->
+                            val oldScale = state.timelinePixelsPerSecond
+                            val newScale = (oldScale * factor).coerceIn(4f, 400f)
+                            if (newScale != oldScale) {
+                                val screenFocusX = focusX - scroll.value
+                                state.timelinePixelsPerSecond = newScale
+                                val target = (focusX * (newScale / oldScale) - screenFocusX).roundToInt()
+                                scope.launch {
+                                    scroll.scrollTo(
+                                        target.coerceIn(0, max(scroll.maxValue, target)),
+                                    )
+                                }
+                            }
+                        },
                         modifier = Modifier
                             .width(contentWidth)
                             .fillMaxHeight(),
@@ -365,6 +381,7 @@ private fun TimelineCanvas(
     state: DogScAppState,
     textMeasurer: TextMeasurer,
     contentWidth: androidx.compose.ui.unit.Dp,
+    onPinchScale: (factor: Float, focusX: Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val project = state.project ?: return
@@ -389,8 +406,8 @@ private fun TimelineCanvas(
                             val distance = (pressed[0].position - pressed[1].position).getDistance()
                             if (lastDistance > 0f && distance > 0f) {
                                 val factor = pinchScaleFactor(lastDistance, distance)
-                                state.timelinePixelsPerSecond =
-                                    (state.timelinePixelsPerSecond * factor).coerceIn(4f, 400f)
+                                val focusX = (pressed[0].position.x + pressed[1].position.x) / 2f
+                                onPinchScale(factor, focusX)
                             }
                             lastDistance = distance
                             event.changes.forEach { it.consume() }

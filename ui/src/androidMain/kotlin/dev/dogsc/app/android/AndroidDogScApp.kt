@@ -29,6 +29,9 @@ fun DogScAndroidApp(activity: ComponentActivity) {
     val createArchive = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         host.handleCreatedArchive(uri?.toString())
     }
+    val pickProjectDirectory = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        host.handlePickedProjectDirectory(uri?.toString())
+    }
     val createDocument = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         host.handleCreatedDocument(result.data?.data?.toString())
     }
@@ -46,6 +49,7 @@ fun DogScAndroidApp(activity: ComponentActivity) {
             pickProject.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
         }
         host.launchCreateArchive = { name -> createArchive.launch(name) }
+        host.launchPickProjectDirectory = { pickProjectDirectory.launch(null) }
         host.launchCreateDocument = { fileName, mimeType ->
             val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)

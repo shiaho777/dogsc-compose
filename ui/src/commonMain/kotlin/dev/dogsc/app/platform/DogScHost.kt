@@ -33,6 +33,7 @@ interface DogScHost {
     fun openOverlaySettings() {}
 
     fun pickProjectArchive(onResult: (String?) -> Unit) = onResult(null)
+    fun pickProjectDirectory(onResult: (String?) -> Unit) = onResult(null)
     fun createProjectArchive(suggestedName: String, onResult: (String?) -> Unit) = onResult(null)
 
     fun pickVideo(onResult: (String?) -> Unit)

@@ -67,6 +67,9 @@ class AndroidDogScPlatform(
     override suspend fun importProjectPackage(uri: String): String? =
         repository.importProjectPackage(uri)
 
+    override suspend fun importProjectDirectory(uri: String): String? =
+        repository.importProjectDirectory(uri)
+
     override suspend fun duplicateProject(id: String): Boolean = repository.duplicateProject(id)
 
     override suspend fun renameProject(id: String, title: String): Boolean = repository.renameProject(id, title)

@@ -9,6 +9,7 @@ import android.net.Uri
 import android.util.Log
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.documentfile.provider.DocumentFile
 import dev.dogsc.app.android.AndroidRecorderManager
 import dev.dogsc.app.android.recording.FragmentedRecordingRecovery
 import androidx.compose.ui.graphics.asImageBitmap
@@ -142,44 +143,82 @@ class AndroidProjectRepository(private val context: Context) {
                     }
                 }
             } ?: return@withContext null
-            val manifest = temp.walkTopDown().firstOrNull { it.isFile && it.name == "project.json" }
-                ?: return@withContext null
-            val root = manifest.parentFile ?: temp
-            val rawProject = manifest.readText()
-            val directError = runCatching { ProjectCodec.decode(rawProject) }.exceptionOrNull()
-            val adaptedText = if (directError != null) ProjectPackageCompat.adapt(rawProject) else null
-            val decoded = if (directError == null) {
-                ProjectCodec.decode(rawProject)
-            } else {
-                val adaptedError = adaptedText?.let { runCatching { ProjectCodec.decode(it) }.exceptionOrNull() }
-                if (adaptedError != null) {
-                    Log.e("DogSCImport", "decode failed direct=$directError adapted=$adaptedError", adaptedError)
-                }
-                adaptedText?.let { ProjectCodec.decodeOrNull(it) }
-            } ?: return@withContext null
-            val newId = UUID.randomUUID().toString()
-            val project = decoded.copy(
-                id = newId,
-                title = decoded.title.ifBlank { Loc.t("导入的视频") }.take(200),
-                createdAtEpochMs = if (decoded.createdAtEpochMs > 0) decoded.createdAtEpochMs else System.currentTimeMillis(),
-            )
-            val screenRelative = project.media?.screen?.relativePath
-            if (screenRelative == null || !File(root, screenRelative).exists()) {
-                Log.e("DogSCImport", "missing screen $screenRelative root=$root")
-                return@withContext null
-            }
-            val destination = File(projectsDir, newId)
-            if (!root.copyRecursively(destination, overwrite = true)) {
-                Log.e("DogSCImport", "copy failed $root -> $destination")
-                return@withContext null
-            }
-            File(destination, "project.json").writeText(ProjectCodec.encode(project))
-            ensureThumbnail(project, destination)
-            newId
+            importExtractedPackage(temp)
         } catch (_: Throwable) {
             null
         } finally {
             temp.deleteRecursively()
+        }
+    }
+
+    suspend fun importProjectDirectory(uri: String): String? = withContext(Dispatchers.IO) {
+        val root = runCatching { DocumentFile.fromTreeUri(context, Uri.parse(uri)) }.getOrNull()
+            ?: return@withContext null
+        if (!root.isDirectory) return@withContext null
+        val temp = File(context.cacheDir, "project-dir-import-${UUID.randomUUID()}").apply { mkdirs() }
+        try {
+            copyDocumentTree(root, temp)
+            importExtractedPackage(temp)
+        } catch (_: Throwable) {
+            null
+        } finally {
+            temp.deleteRecursively()
+        }
+    }
+
+    private fun importExtractedPackage(temp: File): String? {
+        val manifest = temp.walkTopDown().firstOrNull { it.isFile && it.name == "project.json" }
+            ?: return null
+        val root = manifest.parentFile ?: temp
+        val rawProject = manifest.readText()
+        val directError = runCatching { ProjectCodec.decode(rawProject) }.exceptionOrNull()
+        val adaptedText = if (directError != null) ProjectPackageCompat.adapt(rawProject) else null
+        val decoded = if (directError == null) {
+            ProjectCodec.decode(rawProject)
+        } else {
+            val adaptedError = adaptedText?.let { runCatching { ProjectCodec.decode(it) }.exceptionOrNull() }
+            if (adaptedError != null) {
+                Log.e("DogSCImport", "decode failed direct=$directError adapted=$adaptedError", adaptedError)
+            }
+            adaptedText?.let { ProjectCodec.decodeOrNull(it) }
+        } ?: return null
+        val newId = UUID.randomUUID().toString()
+        val project = decoded.copy(
+            id = newId,
+            title = decoded.title.ifBlank { Loc.t("导入的视频") }.take(200),
+            createdAtEpochMs = if (decoded.createdAtEpochMs > 0) decoded.createdAtEpochMs else System.currentTimeMillis(),
+        )
+        val screenRelative = project.media?.screen?.relativePath
+        if (screenRelative == null || !File(root, screenRelative).exists()) {
+            Log.e("DogSCImport", "missing screen $screenRelative root=$root")
+            return null
+        }
+        val destination = File(projectsDir, newId)
+        if (!root.copyRecursively(destination, overwrite = true)) {
+            Log.e("DogSCImport", "copy failed $root -> $destination")
+            return null
+        }
+        File(destination, "project.json").writeText(ProjectCodec.encode(project))
+        ensureThumbnail(project, destination)
+        return newId
+    }
+
+    private fun copyDocumentTree(source: DocumentFile, destination: File) {
+        if (!destination.exists()) destination.mkdirs()
+        source.listFiles().forEach { child ->
+            val name = child.name ?: return@forEach
+            if (name == "." || name == ".." || name.contains('/') || name.contains('\\')) return@forEach
+            val target = File(destination, name)
+            if (child.isDirectory) {
+                copyDocumentTree(child, target)
+            } else if (child.isFile) {
+                runCatching {
+                    context.contentResolver.openInputStream(child.uri)?.use { input ->
+                        target.parentFile?.mkdirs()
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+            }
         }
     }
 

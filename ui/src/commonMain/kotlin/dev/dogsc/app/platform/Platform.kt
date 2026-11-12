@@ -113,6 +113,7 @@ interface DogScPlatform {
     suspend fun clearTrash(): Boolean = false
     suspend fun exportProjectPackage(id: String, outputUri: String): Boolean = false
     suspend fun importProjectPackage(uri: String): String? = null
+    suspend fun importProjectDirectory(uri: String): String? = null
     suspend fun duplicateProject(id: String): Boolean
     suspend fun renameProject(id: String, title: String): Boolean
 

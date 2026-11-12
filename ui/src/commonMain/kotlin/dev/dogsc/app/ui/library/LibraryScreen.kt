@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Settings
@@ -90,6 +91,7 @@ fun LibraryScreen(
     var deleteTarget by remember { mutableStateOf<ProjectSummary?>(null) }
     var renameTarget by remember { mutableStateOf<ProjectSummary?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var showImportMenu by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -119,11 +121,31 @@ fun LibraryScreen(
                 )
             }
             Spacer(Modifier.weight(1f))
-            SoftIconButton(
-                Icons.Outlined.FileDownload,
-                onClick = { host.pickProjectArchive { uri -> if (uri != null) state.importProjectPackage(uri) } },
-                contentDescription = "导入项目",
-            )
+            Box {
+                SoftIconButton(
+                    Icons.Outlined.FileDownload,
+                    onClick = { showImportMenu = true },
+                    contentDescription = "导入项目",
+                )
+                DropdownMenu(expanded = showImportMenu, onDismissRequest = { showImportMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("导入项目包 (ZIP)") },
+                        leadingIcon = { Icon(Icons.Outlined.FileUpload, null) },
+                        onClick = {
+                            showImportMenu = false
+                            host.pickProjectArchive { uri -> if (uri != null) state.importProjectPackage(uri) }
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导入项目文件夹") },
+                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) },
+                        onClick = {
+                            showImportMenu = false
+                            host.pickProjectDirectory { uri -> if (uri != null) state.importProjectDirectory(uri) }
+                        },
+                    )
+                }
+            }
             Spacer(Modifier.width(4.dp))
             SoftIconButton(Icons.Outlined.Settings, onClick = { state.openSettings() }, contentDescription = "设置")
         }

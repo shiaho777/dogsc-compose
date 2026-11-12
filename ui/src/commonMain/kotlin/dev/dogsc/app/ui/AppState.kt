@@ -1144,6 +1144,21 @@ class DogScAppState(
         }
     }
 
+    fun importProjectDirectory(uri: String) {
+        scope.launch {
+            isBusy = true
+            busyMessage = "正在导入项目"
+            val id = platform.importProjectDirectory(uri)
+            isBusy = false
+            if (id != null) {
+                refreshProjects()
+                showToast("项目已导入")
+            } else {
+                showToast("导入失败", isError = true)
+            }
+        }
+    }
+
     fun renameProject(summary: ProjectSummary, title: String) {
         val clean = title.trim().take(200)
         if (clean.isBlank() || clean == summary.title) return
