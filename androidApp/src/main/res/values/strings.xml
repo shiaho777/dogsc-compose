@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">DogSC 触控记录</string>
+    <string name="accessibility_description">记录点击与滚动位置，用于在剪辑时生成可编辑的光标轨迹和自动运镜。DogSC 不会读取屏幕文字或输入内容。</string>
+</resources>
