@@ -3,6 +3,17 @@ package dev.dogsc.app.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.scale
+import dev.dogsc.app.ui.theme.DogScDimens
+import dev.dogsc.app.ui.theme.DogScMotion
+import dev.dogsc.app.ui.theme.rememberReducedMotion
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -30,8 +41,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import dev.dogsc.app.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,6 +73,29 @@ import dev.dogsc.app.ui.theme.DogScFontMedium
 import kotlin.math.roundToInt
 
 enum class PillVariant { Primary, Secondary, Ghost, Danger, AccentSoft }
+
+/**
+ * Press scale with a minimum visible duration (upstream AppChoiceFeedback): a fast
+ * tap still shows the press for [DogScMotion.MinPressMs] before springing back, so
+ * feedback never flashes subliminally. Collapses to 1f under reduced motion.
+ */
+@Composable
+private fun rememberPressScale(interaction: MutableInteractionSource): Float {
+    val reduced = rememberReducedMotion()
+    val rawPressed by interaction.collectIsPressedAsState()
+    var held by remember { mutableStateOf(false) }
+    LaunchedEffect(rawPressed) {
+        if (rawPressed) {
+            held = true
+        } else if (held) {
+            delay(DogScMotion.MinPressMs.toLong())
+            held = false
+        }
+    }
+    val target = if (held && !reduced) DogScDimens.PressScale else 1f
+    val scale by animateFloatAsState(target, DogScMotion.snappy(), label = "press-scale")
+    return scale
+}
 
 @Composable
 fun PillButton(
@@ -88,8 +125,15 @@ fun PillButton(
     }
     val shape = RoundedCornerShape(if (compact) 11.dp else 14.dp)
     val animatedAlpha = if (enabled) 1f else 0.38f
+    val pressScale = rememberPressScale(interaction)
+    val washAlpha by animateFloatAsState(
+        if (pressed) DogScDimens.PressWashAlpha else 0f,
+        DogScMotion.hoverTween(),
+        label = "pill-wash",
+    )
     Row(
         modifier = modifier
+            .scale(pressScale)
             .height(if (compact) 34.dp else 42.dp)
             .clip(shape)
             .background(background.copy(alpha = background.alpha * animatedAlpha))
@@ -100,9 +144,7 @@ fun PillButton(
                     Modifier
                 }
             )
-            .then(
-                if (pressed) Modifier.background(DogScColors.PrimaryText.copy(alpha = 0.06f)) else Modifier
-            )
+            .background(DogScColors.PrimaryText.copy(alpha = washAlpha))
             .clickable(
                 interactionSource = interaction,
                 indication = null,
@@ -149,13 +191,28 @@ fun SoftIconButton(
     enabled: Boolean = true,
     tint: Color = DogScColors.SecondaryText,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale = rememberPressScale(interaction)
     val background = if (selected) DogScColors.SelectionWash else Color.Transparent
+    val washAlpha by animateFloatAsState(
+        if (pressed) DogScDimens.PressWashAlpha else 0f,
+        DogScMotion.hoverTween(),
+        label = "icon-wash",
+    )
     Box(
         modifier = modifier
+            .scale(pressScale)
             .size(size)
             .clip(RoundedCornerShape(size / 3))
             .background(background)
-            .clickable(enabled = enabled, onClick = onClick),
+            .background(DogScColors.PrimaryText.copy(alpha = washAlpha))
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -174,13 +231,14 @@ fun SoftCard(
     color: Color = DogScColors.Panel,
     content: @Composable () -> Unit,
 ) {
+    val shadowColor = if (DogScColors.isDark) Color(0x66000000) else Color(0x14101A2E)
     Box(
         modifier = modifier
             .shadow(
-                elevation = 10.dp,
+                elevation = if (DogScColors.isDark) 14.dp else 10.dp,
                 shape = shape,
-                ambientColor = Color(0x14101A2E),
-                spotColor = Color(0x14101A2E),
+                ambientColor = shadowColor,
+                spotColor = shadowColor,
             )
             .clip(shape)
             .background(color)
@@ -258,6 +316,12 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier, trailing: (@Compos
     }
 }
 
+/**
+ * Bar slider with the value embedded inside the filled track (upstream EditorBarSlider).
+ * Drag to adjust, double-tap the value to type an exact number. Same signature as before, so
+ * every inspector slider upgrades at once. Long-press fine mode is approximated by the precise
+ * numeric entry on touch (no Shift key).
+ */
 @Composable
 fun LabeledSlider(
     label: String,
@@ -268,24 +332,95 @@ fun LabeledSlider(
     valueLabel: (Float) -> String = { "${(it * 100).roundToInt()}%" },
     onValueChangeFinished: (() -> Unit)? = null,
 ) {
+    var editing by remember { mutableStateOf(false) }
+    var editText by remember { mutableStateOf("") }
+    val range = valueRange.endInclusive - valueRange.start
+    val fraction = if (range > 0f) ((value - valueRange.start) / range).coerceIn(0f, 1f) else 0f
+    val currentChange by rememberUpdatedState(onValueChange)
+    val currentFinished by rememberUpdatedState(onValueChangeFinished)
+    // Long-press enters fine mode (touch substitute for desktop Shift-drag): 5x finer travel.
+    var fine by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+
     Column(modifier = modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.weight(1f))
-            Text(valueLabel(value), color = DogScColors.PrimaryText, style = MaterialTheme.typography.labelMedium)
+        Text(label, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(3.dp))
+        if (editing) {
+            OutlinedTextField(
+                value = editText,
+                onValueChange = { editText = it },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                textStyle = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.fillMaxWidth().height(46.dp),
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton("取消", onClick = { editing = false }, compact = true, variant = PillVariant.Ghost)
+                PillButton("确定", onClick = {
+                    val parsed = editText.toFloatOrNull()
+                    if (parsed != null) {
+                        currentChange(parsed.coerceIn(valueRange.start, valueRange.endInclusive))
+                        currentFinished?.invoke()
+                    }
+                    editing = false
+                }, compact = true, variant = PillVariant.Primary)
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(DogScDimens.RadiusXS))
+                    .background(DogScColors.ControlWell)
+                    .excludeSystemGestures()
+                    .pointerInput(valueRange) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { fine = false },
+                            onDragEnd = { currentFinished?.invoke(); fine = false },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            val mult = if (fine) 0.2f else 1f
+                            val delta = dragAmount / size.width * range * mult
+                            currentChange((value + delta).coerceIn(valueRange.start, valueRange.endInclusive))
+                        }
+                    }
+                    .pointerInput(valueRange) {
+                        detectTapGestures(
+                            onTap = { offset ->
+                                val f = (offset.x / size.width).coerceIn(0f, 1f)
+                                currentChange(valueRange.start + range * f)
+                                currentFinished?.invoke()
+                            },
+                            onDoubleTap = {
+                                editText = value.toString()
+                                editing = true
+                            },
+                            onLongPress = {
+                                fine = true
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            },
+                        )
+                    },
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(fraction)
+                        .background(
+                            if (fine) DogScColors.Mint.copy(alpha = 0.92f)
+                            else DogScColors.Accent.copy(alpha = 0.92f),
+                        ),
+                )
+                Text(
+                    text = if (fine) "精调 · ${valueLabel(value)}" else valueLabel(value),
+                    color = if (fraction > 0.5f) DogScColors.OnAccent else DogScColors.PrimaryText,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            }
         }
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = valueRange,
-            onValueChangeFinished = onValueChangeFinished,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = DogScColors.PrimaryText,
-                inactiveTrackColor = DogScColors.ControlWell,
-            ),
-            modifier = Modifier.fillMaxWidth().height(28.dp).excludeSystemGestures(),
-        )
     }
 }
 
@@ -337,25 +472,40 @@ fun DogScSwitch(
     onCheckedChange: (Boolean) -> Unit,
     enabled: Boolean = true,
 ) {
-    val offset by animateFloatAsState(if (checked) 1f else 0f, tween(180), label = "switch")
+    val reduced = rememberReducedMotion()
+    val haptic = LocalHapticFeedback.current
+    val offset by animateFloatAsState(
+        if (checked) 1f else 0f,
+        if (reduced) tween(0) else DogScMotion.snappyTween(),
+        label = "switch",
+    )
+    val trackColor by animateColorAsState(
+        when {
+            !enabled -> DogScColors.ControlWell
+            checked -> DogScColors.Accent
+            else -> DogScColors.ControlWell
+        },
+        if (reduced) tween(0) else DogScMotion.snappyTween(),
+        label = "switch-track",
+    )
+    // Track 38dp, thumb 18dp, 2dp inset each side -> 16dp travel. The animated
+    // offset drives the thumb's start padding so it glides instead of snapping.
     Box(
         modifier = Modifier
             .width(38.dp)
             .height(22.dp)
             .clip(CircleShape)
-            .background(
-                when {
-                    !enabled -> DogScColors.ControlWell
-                    checked -> DogScColors.Accent
-                    else -> DogScColors.ControlWell
-                }
-            )
-            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .background(trackColor)
+            .clickable(enabled = enabled) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onCheckedChange(!checked)
+            }
             .padding(2.dp),
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+        contentAlignment = Alignment.CenterStart,
     ) {
         Box(
             Modifier
+                .padding(start = 16.dp * offset)
                 .size(18.dp)
                 .shadow(2.dp, CircleShape)
                 .clip(CircleShape)

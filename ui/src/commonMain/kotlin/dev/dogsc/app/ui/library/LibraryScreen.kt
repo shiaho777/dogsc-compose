@@ -3,7 +3,13 @@ package dev.dogsc.app.ui.library
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.scale
+import dev.dogsc.app.ui.theme.DogScMotion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -198,8 +204,19 @@ fun LibraryScreen(
         Spacer(Modifier.height(12.dp))
 
         if (state.isLoadingProjects) {
-            Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
-                Text("正在载入项目…", color = DogScColors.TertiaryText, style = MaterialTheme.typography.bodyMedium)
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                repeat(2) {
+                    SoftCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+                        Column {
+                            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(DogScColors.Raised))
+                            Column(Modifier.padding(13.dp)) {
+                                Box(Modifier.fillMaxWidth(0.6f).height(14.dp).clip(RoundedCornerShape(4.dp)).background(DogScColors.ControlWell))
+                                Spacer(Modifier.height(8.dp))
+                                Box(Modifier.fillMaxWidth(0.4f).height(10.dp).clip(RoundedCornerShape(4.dp)).background(DogScColors.ControlWell))
+                            }
+                        }
+                    }
+                }
             }
         } else if (state.projects.isEmpty()) {
             EmptyLibrary(
@@ -312,7 +329,14 @@ private fun ProjectCard(
     val thumbnail by produceState<ImageBitmap?>(null, project.id, project.thumbnailPath) {
         value = host.platform.loadProjectThumbnail(project)
     }
-    SoftCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.98f else 1f,
+        DogScMotion.snappy(),
+        label = "card-press",
+    )
+    SoftCard(modifier = Modifier.fillMaxWidth().scale(scale), shape = RoundedCornerShape(18.dp)) {
         Column {
             Box(
                 modifier = Modifier
@@ -320,25 +344,30 @@ private fun ProjectCard(
                     .aspectRatio(16f / 9f)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFFE7E8EC), Color(0xFFD7D9DF)),
+                            listOf(DogScColors.Raised, DogScColors.ControlWell),
                         )
                     )
-                    .clickable(onClick = onOpen),
+                    .clickable(interactionSource = interaction, indication = null, onClick = onOpen),
             ) {
                 val image = thumbnail
                 if (image != null) {
-                    Image(
-                        bitmap = image,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize().blur(28.dp),
-                        contentScale = ContentScale.Crop,
-                        alpha = 0.55f,
-                    )
+                    // Fill the 16:9 frame edge-to-edge; a bottom scrim keeps the duration badge
+                    // legible over any thumbnail.
                     Image(
                         bitmap = image,
                         contentDescription = project.title,
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
+                        contentScale = ContentScale.Crop,
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0.62f to Color.Transparent,
+                                    1f to Color.Black.copy(alpha = 0.42f),
+                                ),
+                            ),
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -354,9 +383,10 @@ private fun ProjectCard(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(10.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(7.dp))
+                        .padding(horizontal = 7.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(

@@ -255,6 +255,18 @@ class VideoFrameSource(file: File) {
         private val retriever = MediaMetadataRetriever()
         private var lastTime = -1.0
         private var last: Bitmap? = null
+        // Frame-level LRU for rotated sources: the retriever re-decodes a keyframe on every seek
+        // (50-110 ms). Scrubbing back and forth revisits the same source frames, so caching the
+        // last few decoded frames keyed by quantized source time makes repeated seeks instant.
+        private val frameCache = object : LinkedHashMap<Long, Bitmap>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Bitmap>?): Boolean {
+                if (size > 6) {
+                    eldest?.value?.let { if (!it.isRecycled) it.recycle() }
+                    return true
+                }
+                return false
+            }
+        }
 
         init {
             runCatching { retriever.setDataSource(file.absolutePath) }
@@ -262,12 +274,20 @@ class VideoFrameSource(file: File) {
 
         fun frameAt(time: Double): Bitmap? {
             if (last != null && abs(time - lastTime) < 0.004) return last
+            // Quantize to ~30 fps source-frame buckets so nearby requests share a cached frame.
+            val key = (time * 30.0).toLong()
+            frameCache[key]?.takeIf { !it.isRecycled }?.let {
+                last = it
+                lastTime = time
+                return it
+            }
             val bitmap = runCatching {
                 retriever.getFrameAtTime(
                     (time * 1_000_000).toLong(),
                     MediaMetadataRetriever.OPTION_CLOSEST,
                 )
             }.getOrNull() ?: return last
+            frameCache[key] = bitmap
             last = bitmap
             lastTime = time
             return bitmap
@@ -275,7 +295,9 @@ class VideoFrameSource(file: File) {
 
         fun close() {
             runCatching { retriever.release() }
-            last?.recycle()
+            frameCache.values.forEach { if (!it.isRecycled) it.recycle() }
+            frameCache.clear()
+            last?.takeIf { !it.isRecycled }?.recycle()
             last = null
         }
     }

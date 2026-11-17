@@ -1,8 +1,15 @@
 package dev.dogsc.app.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import dev.dogsc.app.ui.theme.DogScMotion
+import dev.dogsc.app.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -88,7 +95,8 @@ fun DogScApp(host: DogScHost) {
             is AppScreen.Editor -> "editor"
             else -> null
         }
-        if (kind != null && !host.platform.hasSeenTour(kind)) tourKind = kind
+        // Auto coach-marks run once per install (global gate); Settings can replay per surface.
+        if (kind != null && !host.platform.hasSeenAnyTour() && !host.platform.hasSeenTour(kind)) tourKind = kind
     }
 
     LaunchedEffect(state.requestedTour) {
@@ -133,16 +141,38 @@ fun DogScApp(host: DogScHost) {
             CompositionLocalProvider(LocalTourTargets provides tourTargets) {
                 if (state.showOnboarding) {
                     OnboardingScreen(state = state, host = host)
-                } else when (val screen = state.screen) {
-                    AppScreen.Library -> LibraryScreen(
-                        state = state,
-                        host = host,
-                        onStartRecording = { state.openRecordSetup() },
-                    )
-                    AppScreen.RecordSetup -> RecordSetupScreen(state, host)
-                    AppScreen.Recording -> RecordingScreen(state, host)
-                    AppScreen.Settings -> SettingsScreen(state, host)
-                    is AppScreen.Editor -> EditorScreen(state, host)
+                } else {
+                    val reduced = rememberReducedMotion()
+                    AnimatedContent(
+                        targetState = state.screen,
+                        transitionSpec = {
+                            if (reduced) {
+                                fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                            } else {
+                                // Forward navigation slides in from the right; going back to the
+                                // library slides in from the left, so direction reads naturally.
+                                val forward = targetState != AppScreen.Library
+                                val dir = if (forward) 1 else -1
+                                (slideInHorizontally(tween(DogScMotion.FluidMs)) { it / 6 * dir } +
+                                    fadeIn(tween(DogScMotion.FluidMs))) togetherWith
+                                    (slideOutHorizontally(tween(DogScMotion.FluidMs)) { -it / 6 * dir } +
+                                        fadeOut(tween(DogScMotion.FluidMs)))
+                            }
+                        },
+                        label = "screen-transition",
+                    ) { screen ->
+                        when (screen) {
+                            AppScreen.Library -> LibraryScreen(
+                                state = state,
+                                host = host,
+                                onStartRecording = { state.openRecordSetup() },
+                            )
+                            AppScreen.RecordSetup -> RecordSetupScreen(state, host)
+                            AppScreen.Recording -> RecordingScreen(state, host)
+                            AppScreen.Settings -> SettingsScreen(state, host)
+                            is AppScreen.Editor -> EditorScreen(state, host)
+                        }
+                    }
                 }
             }
             tourKind?.let { kind ->
@@ -151,6 +181,7 @@ fun DogScApp(host: DogScHost) {
                     targets = tourTargets,
                     onDone = {
                         host.platform.markTourSeen(kind)
+                        host.platform.markAnyTourSeen()
                         tourKind = null
                     },
                 )

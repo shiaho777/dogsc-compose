@@ -328,6 +328,115 @@ object TimelineEditor {
     fun deleteSticker(project: RecorderProject, clipID: String): RecorderProject =
         project.copy(timeline = project.timeline.copy(stickerClips = project.timeline.stickerClips.filterNot { it.id == clipID }))
 
+    /** Duplicates a sticker with a fresh id, nudged so the copy is visible beside the original. */
+    fun duplicateSticker(project: RecorderProject, clipID: String): RecorderProject? {
+        val clip = project.timeline.stickerClips.firstOrNull { it.id == clipID } ?: return null
+        val copy = clip.copy(
+            id = dev.dogsc.core.model.randomId(),
+            position = dev.dogsc.core.model.NormalizedPoint(
+                (clip.position.x + 0.04).coerceIn(0.0, 1.0),
+                (clip.position.y + 0.04).coerceIn(0.0, 1.0),
+            ),
+        )
+        return project.copy(timeline = project.timeline.copy(stickerClips = project.timeline.stickerClips + copy))
+    }
+
+    /** Reorders a sticker to the front (toFront) or back of the sticker stack. */
+    fun reorderSticker(project: RecorderProject, clipID: String, toFront: Boolean): RecorderProject {
+        val stickers = project.timeline.stickerClips
+        if (stickers.none { it.id == clipID }) return project
+        val maxLayer = stickers.maxOf { it.layerIndex }
+        val minLayer = stickers.minOf { it.layerIndex }
+        return project.copy(timeline = project.timeline.copy(
+            stickerClips = stickers.map {
+                if (it.id == clipID) it.copy(layerIndex = if (toFront) maxLayer + 1 else minLayer - 1) else it
+            },
+        ))
+    }
+
+    /** Adds a camera sync anchor (upstream camera sync-anchor curve track). */
+    fun addCameraSyncAnchor(project: RecorderProject, sourceTime: Double, offset: Double): RecorderProject? {
+        val camera = project.media?.camera ?: return null
+        val anchor = dev.dogsc.core.model.MediaSyncAnchor(sourceTime = max(sourceTime, 0.0), offset = offset)
+        return project.copy(media = project.media.copy(
+            camera = camera.copy(syncAnchors = camera.syncAnchors + anchor),
+        ))
+    }
+
+    /** Removes a camera sync anchor by id. */
+    fun removeCameraSyncAnchor(project: RecorderProject, anchorId: String): RecorderProject? {
+        val camera = project.media?.camera ?: return null
+        return project.copy(media = project.media.copy(
+            camera = camera.copy(syncAnchors = camera.syncAnchors.filterNot { it.id == anchorId }),
+        ))
+    }
+
+    /** Updates a camera sync anchor's offset (drag the curve point vertically). */
+    fun updateCameraSyncAnchor(project: RecorderProject, anchorId: String, offset: Double): RecorderProject? {
+        val camera = project.media?.camera ?: return null
+        if (camera.syncAnchors.none { it.id == anchorId }) return null
+        return project.copy(media = project.media.copy(
+            camera = camera.copy(syncAnchors = camera.syncAnchors.map {
+                if (it.id == anchorId) it.copy(offset = offset) else it
+            }),
+        ))
+    }
+
+    /**
+     * Attribute transfer (upstream EditorEffectTransfer ⌘⇧V): copies the authored appearance of
+     * one zoom clip onto another, preserving the target's identity, timing and focus point.
+     * Returns null when either clip is missing.
+     */
+    fun transferZoomAttributes(project: RecorderProject, fromId: String, toId: String): RecorderProject? {
+        val source = project.timeline.zoomClips.firstOrNull { it.id == fromId } ?: return null
+        if (project.timeline.zoomClips.none { it.id == toId }) return null
+        return project.copy(timeline = project.timeline.copy(
+            zoomClips = project.timeline.zoomClips.map {
+                if (it.id == toId) it.copy(
+                    scale = source.scale,
+                    easing = source.easing,
+                    customCurve = source.customCurve,
+                    enterDuration = source.enterDuration,
+                    exitDuration = source.exitDuration,
+                    focusEffect = source.focusEffect,
+                ) else it
+            },
+        ))
+    }
+
+    /** Duplicates a zoom clip at a new start time with a fresh id (upstream ⌘C/⌘V). */
+    fun duplicateZoom(project: RecorderProject, clipId: String, newStart: Double, duration: Double): RecorderProject? {
+        val clip = project.timeline.zoomClips.firstOrNull { it.id == clipId } ?: return null
+        val length = clip.endTime - clip.startTime
+        val end = (newStart + length).coerceAtMost(duration)
+        if (end - newStart < 0.16) return null
+        val copy = clip.copy(
+            id = dev.dogsc.core.model.randomId(),
+            startTime = newStart,
+            endTime = end,
+        )
+        return project.copy(timeline = project.timeline.copy(zoomClips = project.timeline.zoomClips + copy))
+    }
+
+    /**
+     * Multi-select batch delete (upstream ⇧/⌘ multi-select). Removes every referenced clip across
+     * all overlay/motion tracks in one transform, so the whole batch is a single undo entry.
+     */
+    fun deleteClips(
+        project: RecorderProject,
+        zoomIds: Set<String> = emptySet(),
+        screenIds: Set<String> = emptySet(),
+        cameraIds: Set<String> = emptySet(),
+        mosaicIds: Set<String> = emptySet(),
+        stickerIds: Set<String> = emptySet(),
+    ): RecorderProject = project.copy(timeline = project.timeline.copy(
+        zoomClips = project.timeline.zoomClips.filterNot { it.id in zoomIds },
+        screenMotionClips = project.timeline.screenMotionClips.filterNot { it.id in screenIds },
+        cameraMotionClips = project.timeline.cameraMotionClips.filterNot { it.id in cameraIds },
+        mosaicClips = project.timeline.mosaicClips.filterNot { it.id in mosaicIds },
+        stickerClips = project.timeline.stickerClips.filterNot { it.id in stickerIds },
+    ))
+
     fun addZoom(
         project: RecorderProject,
         start: Double,

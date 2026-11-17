@@ -142,6 +142,9 @@ interface DogScPlatform {
     fun hasSeenTour(kind: String): Boolean = true
     fun markTourSeen(kind: String) {}
     fun resetTours() {}
+    /** Global gate: auto coach-marks run once per install; replay stays available in Settings. */
+    fun hasSeenAnyTour(): Boolean = true
+    fun markAnyTourSeen() {}
 
     fun hasSeenOnboarding(): Boolean
     fun markOnboardingSeen()

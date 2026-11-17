@@ -95,15 +95,23 @@ A real exported frame from the Android pipeline:
 
 This is an honest status list, not a completion claim. See [PARITY.md](docs/PARITY.md) for the full map.
 
-- Export is currently a CPU Canvas renderer. It produces correct 1080p/30 output on the test device, but a 12-second clip takes roughly 45–60 seconds to encode; 4K and long recordings need a GPU renderer.
-- Preview uses Compose for 2D and a `graphicsLayer` approximation for screen 3D; export uses the exact homography. They can differ slightly at extreme angles.
-- Camera recording is implemented with CameraX and a single-lens fallback, but has not yet been verified on a physical device in this environment.
-- Continuous pointer motion is limited by what the accessibility service exposes; the cursor track is click/scroll-based unless a platform provides motion events.
-- The PCM audio mixer is used when volume/mix settings cannot take the fast copy path; it is slower than the copy path and needs optimization.
-- Screen 3D preview uses a `graphicsLayer` approximation while export uses the exact homography; extreme angles can differ.
-- Importing an upstream macOS `.dogsc` project package, memo/teleprompter, multi-select timeline edits, pinch zoom, hover preview, physical keyboard shortcuts, and iOS/desktop targets are not implemented yet.
-- The app is Chinese-only at present; upstream's English localization is not ported yet.
-- The core suite currently has 18 tests; UI/instrumentation coverage is still manual.
+Resolved in the excellence pass (verified on the Android 15 emulator):
+
+- **Direct canvas manipulation**: tap to select, drag to move, corner-handle resize, sticker rotation handle (±90° snap), snap reference lines + numeric capsule, haptics. Drags settle as one undo entry through a transient gesture channel. Covered by an injected-gesture instrumentation test.
+- **Preview/export parity**: mosaic/focus coordinates unified to the screen-content rect; focus blur/softness and sticker backdrop (hide-screen / backdrop-blur) are now rendered in both backends (previously dead parameters); shadows use real low-res blur in preview; dynamic backgrounds share one pure geometry; layer order matches `scene.layerOrder`.
+- **Motion & feel**: unified spring/tween motion tokens with reduced-motion support; button press feedback; switch thumb animation; magnetic-snap pulse ring; timeline edge auto-scroll; inspector sliding tab capsule; bar sliders with embedded value + double-tap exact entry; page transitions.
+- **Editing**: multi-select (long-press) + batch delete, clip copy/paste + attribute paste, Q/W ripple trim, Esc, full keyboard shortcut sheet.
+- **Data safety**: rolling `previous/` manifest backups on every save.
+- **Export**: a Surface-input H.264 encoder (GLES texture upload, hardware color conversion) is preferred with the CPU YUV path kept as a fallback; rotated-source scrubbing uses a frame-level LRU cache.
+
+Still open / honest boundaries:
+
+- **GPU rendering (6b)**: the export renderer is still CPU Canvas. The Surface-input encoder removes the YUV copy, but on the software-GL emulator it is not faster than the native CPU path at 720p — the bottleneck is Canvas rendering, not encoding. A GLES shader renderer (shadows/blur/3D homography on GPU) is the real path to ≥3× realtime and **requires physical-device hardware GL to validate**; it is not claimed done here.
+- Camera recording (CameraX, single-lens fallback) is verified on the emulator's virtual lenses, not yet on physical sensors.
+- Continuous pointer motion depends on what the accessibility service exposes (Android 14+ streams motion; older versions use click/scroll anchors).
+- The PCM audio mixer is used when volume/mix settings cannot take the fast copy path; it is slower than the copy path.
+- iOS/desktop/web targets remain outside this Android-first round.
+- Test suite: 62 core JVM tests + 2 UI unit tests + 2 instrumentation tests (pinch + canvas manipulation), green. Physical-device camera/HEVC checks still pending.
 
 ## License
 

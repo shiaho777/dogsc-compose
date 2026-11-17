@@ -1,7 +1,15 @@
 package dev.dogsc.app.ui.editor
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalDensity
+import dev.dogsc.app.ui.theme.DogScMotion
+import dev.dogsc.app.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -110,6 +118,7 @@ import dev.dogsc.core.model.NormalizedCrop
 import dev.dogsc.core.model.NormalizedOverlayRect
 import dev.dogsc.core.model.NormalizedPoint
 import dev.dogsc.core.model.OverlayTiming
+import dev.dogsc.core.model.RecorderProject
 import dev.dogsc.core.model.ScreenFrameStyle
 import dev.dogsc.core.model.ScreenMotionState
 import dev.dogsc.core.model.TransitionTiming
@@ -157,26 +166,52 @@ fun InspectorPanel(
 
 @Composable
 private fun InspectorTabs(selected: InspectorTab, onSelect: (InspectorTab) -> Unit) {
-    Row(
+    val tabs = InspectorTab.entries
+    val selectedIndex = tabs.indexOf(selected).coerceAtLeast(0)
+    val reduced = rememberReducedMotion()
+    // Sliding capsule (upstream EditorInspectorTabBar): the highlight glides between tabs.
+    val capsuleIndex = remember { Animatable(selectedIndex.toFloat()) }
+    LaunchedEffect(selectedIndex) {
+        if (reduced) capsuleIndex.snapTo(selectedIndex.toFloat())
+        else capsuleIndex.animateTo(selectedIndex.toFloat(), tween(DogScMotion.SnappyMs))
+    }
+    BoxWithConstraints(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        InspectorTab.entries.forEach { tab ->
-            val isSelected = tab == selected
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(30.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSelected) DogScColors.SelectionWash else Color.Transparent)
-                    .clickable { onSelect(tab) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    tab.title,
-                    color = if (isSelected) DogScColors.PrimaryText else DogScColors.SecondaryText,
-                    style = MaterialTheme.typography.labelMedium,
-                )
+        val density = LocalDensity.current
+        val totalWidthPx = with(density) { maxWidth.toPx() }
+        val gapPx = with(density) { 3.dp.toPx() }
+        val tabWidthPx = (totalWidthPx - gapPx * (tabs.size - 1)) / tabs.size
+        val capsuleXPx = capsuleIndex.value * (tabWidthPx + gapPx)
+        // Capsule layer.
+        Box(
+            Modifier
+                .offset { androidx.compose.ui.unit.IntOffset(capsuleXPx.toInt(), 0) }
+                .width(with(density) { tabWidthPx.toDp() })
+                .height(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(DogScColors.SelectionWash),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            tabs.forEach { tab ->
+                val isSelected = tab == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSelect(tab) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        tab.title,
+                        color = if (isSelected) DogScColors.PrimaryText else DogScColors.SecondaryText,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
             }
         }
     }
@@ -349,9 +384,12 @@ private fun CanvasInspector(state: DogScAppState, host: DogScHost) {
             InspectorSection("位置与大小", trailing = {
                 Text("可直接在画面中拖动", color = DogScColors.TertiaryText, style = MaterialTheme.typography.bodySmall)
             }) {
-                PositionPad(
+                GesturePositionPad(
+                    state = state,
                     point = canvas.contentPosition,
-                    onChange = { point -> state.updateCanvas("调整画面位置") { it.copy(contentPosition = point) } },
+                    label = "调整画面位置",
+                    commit = { point -> state.updateCanvas("调整画面位置") { it.copy(contentPosition = point) } },
+                    preview = { point -> state.previewGesture { it.copy(canvas = it.canvas.copy(contentPosition = point)) } },
                 )
                 Spacer(Modifier.height(8.dp))
                 LabeledSlider(
@@ -920,25 +958,15 @@ private fun EffectsInspector(state: DogScAppState) {
             }
         }
         InspectorSection("位置与尺寸") {
-            PositionPad(
+            GesturePositionPad(
+                state = state,
                 point = NormalizedPoint(
                     clip.sourceRect.x + clip.sourceRect.width / 2,
                     clip.sourceRect.y + clip.sourceRect.height / 2,
                 ),
-                onChange = { point ->
-                    state.updateProject("移动效果区域") { current ->
-                        current.copy(timeline = current.timeline.copy(
-                            mosaicClips = current.timeline.mosaicClips.map {
-                                if (it.id == clip.id) it.copy(
-                                    sourceRect = clip.sourceRect.copy(
-                                        x = (point.x - clip.sourceRect.width / 2).coerceIn(0.0, 1.0 - clip.sourceRect.width),
-                                        y = (point.y - clip.sourceRect.height / 2).coerceIn(0.0, 1.0 - clip.sourceRect.height),
-                                    ).clamped(),
-                                ) else it
-                            },
-                        ))
-                    }
-                },
+                label = "移动效果区域",
+                commit = { point -> state.updateProject("移动效果区域") { current -> mosaicMove(current, clip, point) } },
+                preview = { point -> state.previewGesture { current -> mosaicMove(current, clip, point) } },
             )
             LabeledSlider(
                 "宽度",
@@ -1064,9 +1092,13 @@ private fun FocusEffectInspector(state: DogScAppState) {
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (current.target == FocusEffectTarget.FIXED) {
-                    PositionPad(current.center) { point ->
-                        updateFocus(state, zoom?.id, screen?.id) { it.copy(center = point) }
-                    }
+                    GesturePositionPad(
+                        state = state,
+                        point = current.center,
+                        label = "调整焦点虚化",
+                        commit = { point -> updateFocus(state, zoom?.id, screen?.id) { it.copy(center = point) } },
+                        preview = { point -> state.previewGesture { focusTransform(it, zoom?.id, screen?.id) { fx -> fx.copy(center = point) } } },
+                    )
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -1088,28 +1120,58 @@ private fun FocusEffectInspector(state: DogScAppState) {
     }
 }
 
+/** Moves a mosaic/spotlight region so its center lands on [point], clamped to the source. */
+private fun mosaicMove(
+    current: RecorderProject,
+    clip: dev.dogsc.core.model.MosaicClip,
+    point: NormalizedPoint,
+): RecorderProject = current.copy(timeline = current.timeline.copy(
+    mosaicClips = current.timeline.mosaicClips.map {
+        if (it.id == clip.id) it.copy(
+            sourceRect = clip.sourceRect.copy(
+                x = (point.x - clip.sourceRect.width / 2).coerceIn(0.0, 1.0 - clip.sourceRect.width),
+                y = (point.y - clip.sourceRect.height / 2).coerceIn(0.0, 1.0 - clip.sourceRect.height),
+            ).clamped(),
+        ) else it
+    },
+))
+
+private fun focusTransform(
+    project: RecorderProject,
+    zoomId: String?,
+    screenId: String?,
+    transform: (FocusEffect) -> FocusEffect,
+): RecorderProject =
+    if (zoomId != null) {
+        project.copy(timeline = project.timeline.copy(
+            zoomClips = project.timeline.zoomClips.map {
+                if (it.id == zoomId) it.copy(focusEffect = it.focusEffect?.let(transform)) else it
+            },
+        ))
+    } else if (screenId != null) {
+        project.copy(timeline = project.timeline.copy(
+            screenMotionClips = project.timeline.screenMotionClips.map {
+                if (it.id == screenId) it.copy(focusEffect = it.focusEffect?.let(transform)) else it
+            },
+        ))
+    } else project
+
 private fun updateFocus(
     state: DogScAppState,
     zoomId: String?,
     screenId: String?,
     transform: (FocusEffect) -> FocusEffect,
 ) {
-    state.updateProject("调整焦点虚化") { project ->
-        if (zoomId != null) {
-            project.copy(timeline = project.timeline.copy(
-                zoomClips = project.timeline.zoomClips.map {
-                    if (it.id == zoomId) it.copy(focusEffect = it.focusEffect?.let(transform)) else it
-                },
-            ))
-        } else if (screenId != null) {
-            project.copy(timeline = project.timeline.copy(
-                screenMotionClips = project.timeline.screenMotionClips.map {
-                    if (it.id == screenId) it.copy(focusEffect = it.focusEffect?.let(transform)) else it
-                },
-            ))
-        } else project
-    }
+    state.updateProject("调整焦点虚化") { project -> focusTransform(project, zoomId, screenId, transform) }
 }
+
+/** Moves a sticker clip to [point]; shared by the position pad's commit and gesture preview. */
+private fun stickerMove(current: RecorderProject, clipId: String, point: NormalizedPoint): RecorderProject =
+    current.copy(timeline = current.timeline.copy(
+        stickerClips = current.timeline.stickerClips.map {
+            if (it.id == clipId) it.copy(position = point) else it
+        },
+    ))
 
 @Composable
 private fun StickerInspector(state: DogScAppState, host: DogScHost) {
@@ -1162,15 +1224,13 @@ private fun StickerInspector(state: DogScAppState, host: DogScHost) {
     }
     state.selectedSticker()?.let { clip ->
         InspectorSection("布局") {
-            PositionPad(clip.position) { point ->
-                state.updateProject("移动贴图") { current ->
-                    current.copy(timeline = current.timeline.copy(
-                        stickerClips = current.timeline.stickerClips.map {
-                            if (it.id == clip.id) it.copy(position = point) else it
-                        },
-                    ))
-                }
-            }
+            GesturePositionPad(
+                state = state,
+                point = clip.position,
+                label = "移动贴图",
+                commit = { point -> state.updateProject("移动贴图") { current -> stickerMove(current, clip.id, point) } },
+                preview = { point -> state.previewGesture { current -> stickerMove(current, clip.id, point) } },
+            )
         }
         if (project.timeline.stickerClips.size > 1) {
             InspectorSection("层级") {
@@ -1516,13 +1576,12 @@ private fun MotionInspector(state: DogScAppState) {
                     TimelineEditor.updateZoom(current, zoom.id) { it.copy(scale = value.toDouble()) }
                 }
             }, valueLabel = { formatScale(it.toDouble()) })
-            PositionPad(
+            GesturePositionPad(
+                state = state,
                 point = zoom.focus,
-                onChange = { point ->
-                    state.updateProject("调整缩放焦点") { current ->
-                        TimelineEditor.updateZoom(current, zoom.id) { it.copy(focus = point) }
-                    }
-                },
+                label = "调整缩放焦点",
+                commit = { point -> state.updateProject("调整缩放焦点") { current -> TimelineEditor.updateZoom(current, zoom.id) { it.copy(focus = point) } } },
+                preview = { point -> state.previewGesture { current -> TimelineEditor.updateZoom(current, zoom.id) { it.copy(focus = point) } } },
             )
             LabeledSlider("进入时长", zoom.enterDuration.toFloat(), 0f..3f, { value ->
                 state.updateProject("调整缩放进入时长") { current ->
@@ -1733,9 +1792,13 @@ private fun MotionInspector(state: DogScAppState) {
             LabeledSlider("透视", screen.target.perspective.toFloat(), 0f..2f, { value ->
                 updateScreen(state, screen.id) { it.copy(target = it.target.copy(perspective = value.toDouble())) }
             })
-            PositionPad(screen.target.position) { point ->
-                updateScreen(state, screen.id) { it.copy(target = it.target.copy(position = point)) }
-            }
+            GesturePositionPad(
+                state = state,
+                point = screen.target.position,
+                label = "调整屏幕 3D",
+                commit = { point -> updateScreen(state, screen.id) { it.copy(target = it.target.copy(position = point)) } },
+                preview = { point -> state.previewGesture { screenTransform(it, screen.id) { c -> c.copy(target = c.target.copy(position = point)) } } },
+            )
             TimingSliders(
                 timing = screen.timing,
                 maxDuration = (state.outputDuration - screen.timing.startTime).coerceAtLeast(0.08),
@@ -1784,12 +1847,16 @@ private fun TimingSliders(
     }
 }
 
+private fun screenTransform(
+    current: RecorderProject,
+    id: String,
+    transform: (dev.dogsc.core.model.ScreenMotionClip) -> dev.dogsc.core.model.ScreenMotionClip,
+): RecorderProject = current.copy(timeline = current.timeline.copy(
+    screenMotionClips = current.timeline.screenMotionClips.map { if (it.id == id) transform(it) else it },
+))
+
 private fun updateScreen(state: DogScAppState, id: String, transform: (dev.dogsc.core.model.ScreenMotionClip) -> dev.dogsc.core.model.ScreenMotionClip) {
-    state.updateProject("调整屏幕 3D") { current ->
-        current.copy(timeline = current.timeline.copy(
-            screenMotionClips = current.timeline.screenMotionClips.map { if (it.id == id) transform(it) else it },
-        ))
-    }
+    state.updateProject("调整屏幕 3D") { current -> screenTransform(current, id, transform) }
 }
 
 @Composable
@@ -1993,9 +2060,13 @@ private fun CameraInspector(state: DogScAppState) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
-        PositionPad(camera.position) { point ->
-            state.updateCamera("调整摄像头位置") { it.copy(position = point) }
-        }
+        GesturePositionPad(
+            state = state,
+            point = camera.position,
+            label = "调整摄像头位置",
+            commit = { point -> state.updateCamera("调整摄像头位置") { it.copy(position = point) } },
+            preview = { point -> state.previewGesture { it.copy(camera = it.camera.copy(position = point)) } },
+        )
         LabeledSlider("摄像头大小", camera.size.toFloat(), 0.05f..1f, { value ->
             state.updateCamera("调整摄像头大小") { it.copy(size = value.toDouble()) }
         }, valueLabel = { "${(it * 100).roundToInt()}%" })
@@ -2010,9 +2081,13 @@ private fun CameraInspector(state: DogScAppState) {
         })
     }
     InspectorSection("取景") {
-        PositionPad(camera.contentPosition) { point ->
-            state.updateCamera("调整摄像头取景") { it.copy(contentPosition = point) }
-        }
+        GesturePositionPad(
+            state = state,
+            point = camera.contentPosition,
+            label = "调整摄像头取景",
+            commit = { point -> state.updateCamera("调整摄像头取景") { it.copy(contentPosition = point) } },
+            preview = { point -> state.previewGesture { it.copy(camera = it.camera.copy(contentPosition = point)) } },
+        )
         LabeledSlider("蒙版内素材缩放", camera.contentScale.toFloat(), 1f..4f, { value ->
             state.updateCamera("调整摄像头取景缩放") { it.copy(contentScale = value.toDouble()) }
         }, valueLabel = { formatScale(it.toDouble()) })
@@ -2020,6 +2095,9 @@ private fun CameraInspector(state: DogScAppState) {
             state.updateCamera("调整摄像头缩放联动") { it.copy(scaleDuringZoom = value.toDouble()) }
         }, valueLabel = { formatScale(it.toDouble()) })
         SubLabel("跟随屏幕缩放调整摄像头大小；1 倍保持原大小。")
+    }
+    if (project.media?.camera != null) {
+        CameraSyncAnchorSection(state)
     }
     val clip = state.selectedCameraMotion()
     InspectorSection("摄像运动") {
@@ -2090,9 +2168,13 @@ private fun CameraInspector(state: DogScAppState) {
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                PositionPad(clip.target.position) { point ->
-                    updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(position = point)) }
-                }
+                GesturePositionPad(
+                    state = state,
+                    point = clip.target.position,
+                    label = "调整摄像运动",
+                    commit = { point -> updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(position = point)) } },
+                    preview = { point -> state.previewGesture { cameraClipTransform(it, clip.id) { c -> c.copy(target = c.target.copy(position = point)) } } },
+                )
                 LabeledSlider("大小", clip.target.size.toFloat(), 0.05f..1f, { value ->
                     updateCameraClip(state, clip.id) { it.copy(target = it.target.copy(size = value.toDouble())) }
                 }, valueLabel = { "${(it * 100).roundToInt()}%" })
@@ -2109,16 +2191,20 @@ private fun CameraInspector(state: DogScAppState) {
     }
 }
 
+private fun cameraClipTransform(
+    current: RecorderProject,
+    id: String,
+    transform: (dev.dogsc.core.model.CameraMotionClip) -> dev.dogsc.core.model.CameraMotionClip,
+): RecorderProject = current.copy(timeline = current.timeline.copy(
+    cameraMotionClips = current.timeline.cameraMotionClips.map { if (it.id == id) transform(it) else it },
+))
+
 private fun updateCameraClip(
     state: DogScAppState,
     id: String,
     transform: (dev.dogsc.core.model.CameraMotionClip) -> dev.dogsc.core.model.CameraMotionClip,
 ) {
-    state.updateProject("调整摄像运动") { current ->
-        current.copy(timeline = current.timeline.copy(
-            cameraMotionClips = current.timeline.cameraMotionClips.map { if (it.id == id) transform(it) else it },
-        ))
-    }
+    state.updateProject("调整摄像运动") { current -> cameraClipTransform(current, id, transform) }
 }
 
 @Composable
@@ -2269,15 +2355,46 @@ private fun ColorRow(label: String, selected: HexColor, onSelect: (HexColor) -> 
     }
 }
 
+/**
+ * Routes a position-pad drag through the transient gesture channel: discrete taps commit
+ * normally, drags stream previews and settle as one undo entry. [commit] is the same
+ * transform the pad already used; [label] names the resulting undo entry.
+ */
 @Composable
-private fun PositionPad(point: NormalizedPoint, onChange: (NormalizedPoint) -> Unit) {
+private fun GesturePositionPad(
+    state: DogScAppState,
+    point: NormalizedPoint,
+    label: String,
+    commit: (NormalizedPoint) -> Unit,
+    preview: (NormalizedPoint) -> Unit,
+) {
+    PositionPad(
+        point = point,
+        onChange = commit,
+        onPreview = preview,
+        onGestureStart = { state.beginGesture() },
+        onGestureEnd = { state.endGesture(label) },
+    )
+}
+
+@Composable
+private fun PositionPad(
+    point: NormalizedPoint,
+    onChange: (NormalizedPoint) -> Unit,
+    onPreview: ((NormalizedPoint) -> Unit)? = null,
+    onGestureStart: (() -> Unit)? = null,
+    onGestureEnd: (() -> Unit)? = null,
+) {
+    // When a preview channel is supplied, drags stream through it (one undo entry for the
+    // whole drag); taps stay discrete commits. Without it, behavior is unchanged.
+    val emit = onPreview ?: onChange
     Box(
         Modifier
             .fillMaxWidth()
             .height(112.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(DogScColors.ControlWell)
-            .pointerInput(point) {
+            .pointerInput(Unit) {
                 detectTapGestures { offset ->
                     onChange(
                         NormalizedPoint(
@@ -2287,10 +2404,14 @@ private fun PositionPad(point: NormalizedPoint, onChange: (NormalizedPoint) -> U
                     )
                 }
             }
-            .pointerInput(point) {
-                detectDragGestures { change, _ ->
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onGestureStart?.invoke() },
+                    onDragEnd = { onGestureEnd?.invoke() },
+                    onDragCancel = { onGestureEnd?.invoke() },
+                ) { change, _ ->
                     change.consume()
-                    onChange(
+                    emit(
                         NormalizedPoint(
                             (change.position.x / size.width).toDouble().coerceIn(0.0, 1.0),
                             (change.position.y / size.height).toDouble().coerceIn(0.0, 1.0),

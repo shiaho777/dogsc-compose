@@ -2,6 +2,23 @@ package dev.dogsc.app.ui.editor
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,7 +84,9 @@ import dev.dogsc.core.scene.FrameScreenChromeKind
 import dev.dogsc.core.scene.FrameScreenChromeScene
 import dev.dogsc.core.scene.FrameScreenDecoration
 import dev.dogsc.core.scene.FrameStickerScene
+import dev.dogsc.core.scene.OverlayGeometry
 import dev.dogsc.core.scene.ProjectedScreenQuad
+import dev.dogsc.core.scene.RenderParams
 import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.min
@@ -114,12 +133,64 @@ fun ScenePreview(
         }.getOrNull()
     }
 
+    // View transform (pinch to inspect detail on small screens). Kept separate from element
+    // manipulation: at 1x a single finger drags elements; zoomed in it pans the view.
+    var viewScale by remember { mutableStateOf(1f) }
+    var viewOffset by remember { mutableStateOf(Offset.Zero) }
+    var viewSize by remember { mutableStateOf(Size.Zero) }
+
+    fun clampOffset(off: Offset, s: Float): Offset {
+        val mx = (viewSize.width * (s - 1f)) / 2f
+        val my = (viewSize.height * (s - 1f)) / 2f
+        return Offset(off.x.coerceIn(-mx, mx), off.y.coerceIn(-my, my))
+    }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(canvasAspect.toFloat())
-            .clip(RoundedCornerShape(4.dp)),
+            .clip(RoundedCornerShape(4.dp))
+            .onSizeChanged { viewSize = Size(it.width.toFloat(), it.height.toFloat()) }
+            .pointerInput(viewScale > 1.01f) {
+                // Only attach view-navigation gestures while zoomed; at 1x the single finger
+                // belongs to element manipulation (child), so the parent must not intercept.
+                if (viewScale <= 1.01f) return@pointerInput
+                detectTapGestures(onDoubleTap = { viewScale = 1f; viewOffset = Offset.Zero })
+            }
+            .pointerInput(viewScale > 1.01f) {
+                if (viewScale <= 1.01f) return@pointerInput
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.size >= 2) {
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            val newScale = (viewScale * zoom).coerceIn(1f, 4f)
+                            viewOffset = clampOffset(viewOffset + pan, newScale)
+                            viewScale = newScale
+                            event.changes.forEach { it.consume() }
+                        } else if (pressed.size == 1) {
+                            val delta = pressed[0].positionChange()
+                            viewOffset = clampOffset(viewOffset + delta, viewScale)
+                            pressed[0].consume()
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            },
     ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = viewScale
+                    scaleY = viewScale
+                    translationX = viewOffset.x
+                    translationY = viewOffset.y
+                    transformOrigin = TransformOrigin.Center
+                },
+        ) {
         if (scene == null) {
             Box(Modifier.fillMaxSize().background(DogScColors.Raised))
         } else {
@@ -134,19 +205,63 @@ fun ScenePreview(
                 }
             }
             BackgroundBlurLayer(scene, state.backgroundPreviewFrame)
-            ScreenLayer(
-                scene = scene,
-                frame = state.previewFrame,
-                scale = 1f,
-                canvasWidth = canvasWidth,
-                canvasHeight = canvasHeight,
+            // Draw in the scene's layer order so preview matches export exactly:
+            // SCREEN (incl. content-clipped mosaic blur) -> CURSOR -> SPOTLIGHT -> CAMERA -> STICKERS.
+            for (role in scene.layerOrder) {
+                when (role) {
+                    dev.dogsc.core.scene.FrameLayerRole.BACKGROUND -> Unit // already drawn above
+                    dev.dogsc.core.scene.FrameLayerRole.SCREEN -> {
+                        ScreenLayer(
+                            scene = scene,
+                            frame = state.previewFrame,
+                            scale = 1f,
+                            canvasWidth = canvasWidth,
+                            canvasHeight = canvasHeight,
+                        )
+                        StickerBackdropBlurLayer(scene, state.previewFrame)
+                        MosaicBlurLayer(scene, state.previewFrame)
+                        FocusBlurLayer(scene, state.previewFrame)
+                    }
+                    dev.dogsc.core.scene.FrameLayerRole.CURSOR -> CursorLayer(scene)
+                    dev.dogsc.core.scene.FrameLayerRole.SPOTLIGHT -> MosaicLayer(scene)
+                    dev.dogsc.core.scene.FrameLayerRole.CAMERA -> CameraLayer(scene, state.cameraPreviewFrame)
+                    dev.dogsc.core.scene.FrameLayerRole.STICKERS -> StickerLayer(scene, state.stickerFrames)
+                }
+            }
+            // Selection chrome + direct manipulation overlay. Sticker hit boxes use the decoded
+            // image aspect so taps land on the visible pixels.
+            val stickerBox: (dev.dogsc.core.scene.FrameStickerScene) -> dev.dogsc.core.scene.CanvasHitTesting.StickerBox? = { sticker ->
+                val img = state.stickerFrames[sticker.relativePath]
+                stickerBoxFor(scene, sticker, img?.let { it.width.toDouble() / it.height.coerceAtLeast(1) })
+            }
+            val dragFeedback = remember { CanvasDragFeedback() }
+            CanvasSelectionOverlay(state = state, scene = scene, stickerBox = stickerBox, modifier = Modifier.fillMaxSize())
+            CanvasQuickControls(
+                state = state, scene = scene, stickerBox = stickerBox,
+                onOpenSettings = { state.selectAndInspect(state.selection) },
+                modifier = Modifier.fillMaxSize(),
             )
-            MosaicBlurLayer(scene, state.previewFrame)
-            CameraLayer(scene, state.cameraPreviewFrame)
-            CursorLayer(scene)
-            StickerLayer(scene, state.stickerFrames)
-            MosaicLayer(scene)
+            CanvasDragFeedbackOverlay(scene = scene, feedback = dragFeedback, modifier = Modifier.fillMaxSize())
+            CanvasManipulationLayer(
+                state = state, scene = scene, stickerBox = stickerBox, feedback = dragFeedback,
+                modifier = Modifier.fillMaxSize(),
+                dragEnabled = viewScale <= 1.01f,
+            )
         }
+        }
+        // View-zoom control: enter zoom to inspect detail on small screens; once zoomed, pinch
+        // to adjust, single-finger to pan, double-tap (or this button) to reset.
+        dev.dogsc.app.ui.components.SoftIconButton(
+            icon = if (viewScale > 1.01f) Icons.Outlined.Close else Icons.Outlined.Fullscreen,
+            onClick = {
+                if (viewScale > 1.01f) { viewScale = 1f; viewOffset = Offset.Zero }
+                else viewScale = 2f
+            },
+            contentDescription = if (viewScale > 1.01f) "复位视图" else "放大视图",
+            size = 32.dp,
+            iconSize = 17.dp,
+            modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+        )
     }
 }
 
@@ -183,38 +298,46 @@ private fun ScreenLayer(
     val textMeasurer = rememberTextMeasurer()
     val shadow = screen.shadow
     if (shadow != null) {
-        // A full-layer BlurEffect cost ~35 ms per frame on the emulator. Expanding strokes
-        // approximate the same soft shadow at a fraction of the GPU cost.
-        Canvas(Modifier.fillMaxSize()) {
-            val sx = size.width / canvas.width.toFloat()
-            val sy = size.height / canvas.height.toFloat()
+        // True soft shadow matching export's BlurMaskFilter. A full-resolution BlurEffect cost
+        // ~35 ms/frame, so the shadow is drawn into a downscaled layer (÷4) and blurred there,
+        // then scaled back up — bounded GPU cost with a genuinely soft edge instead of strokes.
+        val shadowAlpha = (shadow.opacity * RenderParams.ScreenShadowAlpha / 255.0).toFloat()
+            .coerceIn(0f, 1f) * screen.opacity.toFloat()
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 0.25f
+                    scaleY = 0.25f
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                    val sigma = max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()) * 0.25f
+                    renderEffect = BlurEffect(sigma.coerceAtLeast(1f), sigma.coerceAtLeast(1f), TileMode.Clamp)
+                },
+        ) {
+            // Draw at 4× coordinates so the ÷4 layer scale lands the shadow back on the card.
+            val sx = size.width / canvas.width.toFloat() * 4f
+            val sy = size.height / canvas.height.toFloat() * 4f
             val quad = screen.projectedQuad
+            val dx = shadow.offset.x
             val dy = shadow.offset.y
             val path = Path().apply {
-                moveTo((quad.topLeft.x * sx).toFloat(), ((quad.topLeft.y + dy) * sy).toFloat())
-                lineTo((quad.topRight.x * sx).toFloat(), ((quad.topRight.y + dy) * sy).toFloat())
-                lineTo((quad.bottomRight.x * sx).toFloat(), ((quad.bottomRight.y + dy) * sy).toFloat())
-                lineTo((quad.bottomLeft.x * sx).toFloat(), ((quad.bottomLeft.y + dy) * sy).toFloat())
+                moveTo(((quad.topLeft.x + dx) * sx).toFloat(), ((quad.topLeft.y + dy) * sy).toFloat())
+                lineTo(((quad.topRight.x + dx) * sx).toFloat(), ((quad.topRight.y + dy) * sy).toFloat())
+                lineTo(((quad.bottomRight.x + dx) * sx).toFloat(), ((quad.bottomRight.y + dy) * sy).toFloat())
+                lineTo(((quad.bottomLeft.x + dx) * sx).toFloat(), ((quad.bottomLeft.y + dy) * sy).toFloat())
                 close()
             }
-            val alpha = (shadow.opacity * 90.0 / 255.0).toFloat().coerceIn(0f, 1f) * screen.opacity.toFloat()
-            val radius = max(shadow.radius.toFloat(), 2f) * sx
-            for (i in 0 until 4) {
-                val grow = radius * (i + 1) / 4f
-                drawPath(
-                    path,
-                    Color.Black.copy(alpha = alpha / 7f),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = grow * 2f),
-                )
-            }
-            drawPath(path, Color.Black.copy(alpha = alpha * 0.3f))
+            drawPath(path, Color.Black.copy(alpha = shadowAlpha))
         }
     }
 
     Canvas(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = screen.opacity.toFloat() },
+            .graphicsLayer {
+                // Sticker "仅背景" suppresses the screen card; fold it into the layer alpha.
+                alpha = (screen.opacity * (1.0 - scene.stickerBackdrop.screenSuppression)).toFloat().coerceIn(0f, 1f)
+            },
     ) {
         val w = size.width
         val h = size.height
@@ -450,6 +573,33 @@ private fun CameraLayer(scene: FrameScene, frame: ImageBitmap?) {
     val height = (camera.rect.height / canvas.height).toFloat()
     val radiusFraction = (camera.cornerRadius / max(camera.rect.width, 1.0)).toFloat()
     Box(modifier = Modifier.fillMaxSize()) {
+        val shadow = camera.shadow
+        if (shadow != null) {
+            // True soft shadow (matches export's BlurMaskFilter): blur only this small shadow
+            // layer, not the whole frame, so the per-frame GPU cost stays bounded.
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val canvasScale = size.width / canvas.width.toFloat()
+                        val sigma = (max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()) * canvasScale)
+                            .coerceIn(1f, 48f)
+                        renderEffect = BlurEffect(sigma, sigma, TileMode.Clamp)
+                    },
+            ) {
+                val w = size.width
+                val h = size.height
+                val rect = Rect(left * w, top * h, (left + width) * w, (top + height) * h)
+                val dy = (shadow.offset.y / canvas.height * h).toFloat()
+                val dx = (shadow.offset.x / canvas.width * w).toFloat()
+                drawRoundRect(
+                    Color.Black.copy(alpha = (shadow.opacity * RenderParams.CameraShadowAlpha / 255.0).toFloat()),
+                    Offset(rect.left + dx, rect.top + dy),
+                    rect.size,
+                    CornerRadius(rect.width * radiusFraction, rect.width * radiusFraction),
+                )
+            }
+        }
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -461,15 +611,6 @@ private fun CameraLayer(scene: FrameScene, frame: ImageBitmap?) {
                         rect,
                         CornerRadius(rect.width * radiusFraction, rect.width * radiusFraction),
                     )
-                )
-            }
-            val shadow = camera.shadow
-            if (shadow != null) {
-                drawRoundRect(
-                    Color.Black.copy(alpha = (shadow.opacity * 0.35).toFloat()),
-                    Offset(rect.left, rect.top + rect.height * 0.02f),
-                    rect.size,
-                    CornerRadius(rect.width * radiusFraction, rect.width * radiusFraction),
                 )
             }
             clipPath(path) {
@@ -673,10 +814,46 @@ private fun DrawScope.drawClickEffect(
 private fun StickerLayer(scene: FrameScene, bitmaps: Map<String, ImageBitmap>) {
     if (scene.stickers.isEmpty()) return
     val canvas = scene.canvasSize
+    val ordered = scene.stickers.sortedBy { it.layerIndex }
+    // Soft shadows first (under all stickers), blurred with each sticker's authored radius and
+    // offset — matches export's BlurMaskFilter instead of the old hard offset block.
+    Box(Modifier.fillMaxSize()) {
+        for (sticker in ordered) {
+            val image = bitmaps[sticker.relativePath] ?: continue
+            if (sticker.shadowOpacity <= 0 || sticker.opacity <= 0.001) continue
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val canvasScale = size.width / canvas.width.toFloat()
+                        val sigma = (max(sticker.shadowRadius.toFloat(), 1f) * canvasScale).coerceIn(1f, 48f)
+                        renderEffect = BlurEffect(sigma, sigma, TileMode.Clamp)
+                    },
+            ) {
+                val w = size.width
+                val h = size.height
+                val targetWidth = (sticker.width * canvas.width * sticker.scale / canvas.width * w).toFloat()
+                val targetHeight = targetWidth * image.height / image.width
+                val cx = ((sticker.position.x + sticker.offset.x) * w).toFloat()
+                val cy = ((sticker.position.y + sticker.offset.y) * h).toFloat()
+                val radius = (sticker.cornerRadius / max(canvas.width, 1.0) * w).toFloat()
+                val dx = (sticker.shadowOffset.x / canvas.width * w).toFloat()
+                val dy = (sticker.shadowOffset.y / canvas.height * h).toFloat()
+                rotate(sticker.rotationRadians.toFloat() * 180f / PI.toFloat(), Offset(cx, cy)) {
+                    drawRoundRect(
+                        Color.Black.copy(alpha = (sticker.shadowOpacity * RenderParams.StickerShadowAlpha / 255.0).toFloat()),
+                        Offset(cx - targetWidth / 2 + dx, cy - targetHeight / 2 + dy),
+                        Size(targetWidth, targetHeight),
+                        CornerRadius(radius, radius),
+                    )
+                }
+            }
+        }
+    }
     Canvas(Modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height
-        for (sticker in scene.stickers.sortedBy { it.layerIndex }) {
+        for (sticker in ordered) {
             val image = bitmaps[sticker.relativePath] ?: continue
             val targetWidth = (sticker.width * scene.canvasSize.width * sticker.scale / canvas.width * w).toFloat()
             val targetHeight = targetWidth * image.height / image.width
@@ -692,14 +869,6 @@ private fun StickerLayer(scene: FrameScene, bitmaps: Map<String, ImageBitmap>) {
                             left, top, left + targetWidth, top + targetHeight,
                             CornerRadius(radius, radius),
                         )
-                    )
-                }
-                if (sticker.shadowOpacity > 0) {
-                    drawRoundRect(
-                        Color.Black.copy(alpha = (sticker.shadowOpacity * 0.4).toFloat()),
-                        Offset(left, top + targetHeight * 0.03f),
-                        Size(targetWidth, targetHeight),
-                        CornerRadius(radius, radius),
                     )
                 }
                 clipPath(path) {
@@ -784,16 +953,17 @@ private fun MosaicBlurLayer(scene: FrameScene, frame: ImageBitmap?) {
     val canvas = scene.canvasSize
     val content = scene.screen.finalRect
     for (mosaic in mosaics) {
-        val alpha = (mosaic.intensity * mosaic.transitionProgress * 235.0 / 255.0).toFloat().coerceIn(0f, 1f)
+        val alpha = (mosaic.intensity * mosaic.transitionProgress * RenderParams.MosaicAlphaCeiling).toFloat().coerceIn(0f, 1f)
         Canvas(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer {
                     val previewScale = size.width / canvas.width.toFloat()
-                    // 12 px is the export downscale factor; 0.22 keeps the preview's detail loss
-                    // in the same range as the export's downscale/upscale blur.
-                    val block = 12f * content.width.toFloat() * previewScale / frame.width.coerceAtLeast(1)
-                    val sigma = (block * 0.22f).coerceIn(1.2f, 48f)
+                    // Shared with export: downscale factor + sigma coefficient keep the preview's
+                    // detail loss in the same range as the export's downscale/upscale blur.
+                    val block = RenderParams.MosaicBlurDivisor.toFloat() * content.width.toFloat() * previewScale / frame.width.coerceAtLeast(1)
+                    val sigma = (block * RenderParams.PreviewBlurSigmaFactor.toFloat())
+                        .coerceIn(RenderParams.PreviewBlurSigmaMin.toFloat(), RenderParams.PreviewBlurSigmaMax.toFloat())
                     renderEffect = BlurEffect(sigma, sigma, TileMode.Clamp)
                     this.alpha = alpha
                 },
@@ -825,23 +995,129 @@ private fun MosaicBlurLayer(scene: FrameScene, frame: ImageBitmap?) {
     }
 }
 
+/**
+ * Sticker backdrop blur: a sticker's "录屏虚化" blurs the whole screen card behind it.
+ * Activates FrameStickerBackdropScene.screenBlur, previously computed but never drawn.
+ */
+@Composable
+private fun StickerBackdropBlurLayer(scene: FrameScene, frame: ImageBitmap?) {
+    if (frame == null) return
+    val blur = scene.stickerBackdrop.screenBlur
+    if (blur <= 0.1) return
+    val canvas = scene.canvasSize
+    val content = scene.screen.finalRect
+    Canvas(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val previewScale = size.width / canvas.width.toFloat()
+                val sigma = (blur.toFloat() * previewScale * 0.5f)
+                    .coerceIn(RenderParams.PreviewBlurSigmaMin.toFloat(), RenderParams.PreviewBlurSigmaMax.toFloat())
+                renderEffect = BlurEffect(sigma, sigma, TileMode.Clamp)
+            },
+    ) {
+        val sx = size.width / canvas.width.toFloat()
+        val sy = size.height / canvas.height.toFloat()
+        withTransform({ scale(sx, sy) }) {
+            drawScreenFrame(
+                frame,
+                scene.screen,
+                Rect(content.x.toFloat(), content.y.toFloat(), content.right.toFloat(), content.bottom.toFloat()),
+            )
+        }
+    }
+}
+
+/**
+ * Focus blur: everything outside the clear region (radial circle or linear band) is blurred,
+ * with a soft feather at the boundary. Activates FocusEffect.blur/softness, which previously
+ * only dimmed. Shares the clear-region geometry with export so the two match.
+ */
+@Composable
+private fun FocusBlurLayer(scene: FrameScene, frame: ImageBitmap?) {
+    if (frame == null) return
+    val focus = scene.screen.focusEffect ?: return
+    val strength = focus.effect.blur * focus.progress
+    if (strength <= 0.01) return
+    val canvas = scene.canvasSize
+    val content = scene.screen.finalRect
+    val region = OverlayGeometry.focusClearRegion(content, focus.effect, focus.center.x, focus.center.y)
+    Canvas(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val previewScale = size.width / canvas.width.toFloat()
+                val block = RenderParams.MosaicBlurDivisor.toFloat() * content.width.toFloat() * previewScale / frame.width.coerceAtLeast(1)
+                val sigma = (block * RenderParams.PreviewBlurSigmaFactor.toFloat() * (0.5f + strength.toFloat()))
+                    .coerceIn(RenderParams.PreviewBlurSigmaMin.toFloat(), RenderParams.PreviewBlurSigmaMax.toFloat())
+                renderEffect = BlurEffect(sigma, sigma, TileMode.Clamp)
+                alpha = strength.toFloat().coerceIn(0f, 1f)
+            },
+    ) {
+        val sx = size.width / canvas.width.toFloat()
+        val sy = size.height / canvas.height.toFloat()
+        val cx = (region.center.x * sx).toFloat()
+        val cy = (region.center.y * sy).toFloat()
+        val half = (region.halfWidth * sx).toFloat()
+        val cLeft = (content.x * sx).toFloat()
+        val cTop = (content.y * sy).toFloat()
+        val cRight = (content.right * sx).toFloat()
+        val cBottom = (content.bottom * sy).toFloat()
+        // Even-odd path: content rect minus the clear region -> blur covers only the outside.
+        val blurPath = Path().apply {
+            fillType = PathFillType.EvenOdd
+            addRect(Rect(cLeft, cTop, cRight, cBottom))
+            if (region.isLinear) {
+                // Clear band is drawn rotated; approximate with an axis-aligned band here and
+                // let the dimming layer carry the exact rotation (blur is isotropic).
+                addRect(Rect(cLeft, cy - half, cRight, cy + half))
+            } else {
+                addOval(Rect(cx - half, cy - half, cx + half, cy + half))
+            }
+        }
+        clipPath(blurPath) {
+            withTransform({ scale(sx, sy) }) {
+                drawScreenFrame(
+                    frame,
+                    scene.screen,
+                    Rect(content.x.toFloat(), content.y.toFloat(), content.right.toFloat(), content.bottom.toFloat()),
+                )
+            }
+        }
+        // The clear-region edge is softened by the blur's own sigma; the dimming layer carries
+        // the exact rotated/feathered boundary.
+    }
+}
+
 @Composable
 private fun MosaicLayer(scene: FrameScene) {
     if (scene.screen.mosaics.isEmpty() && scene.screen.focusEffect == null) return
     Canvas(Modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height
+        // Overlay coordinates are content-relative (same contract as export). Map the screen
+        // card into preview pixels once, then derive every region/center from it.
+        val content = scene.screen.finalRect
+        val sx = w / scene.canvasSize.width.toFloat()
+        val sy = h / scene.canvasSize.height.toFloat()
+        val cLeft = (content.x * sx).toFloat()
+        val cTop = (content.y * sy).toFloat()
+        val cRight = (content.right * sx).toFloat()
+        val cBottom = (content.bottom * sy).toFloat()
+        val cWidth = cRight - cLeft
+        val cHeight = cBottom - cTop
         for (mosaic in scene.screen.mosaics) {
-            val left = (mosaic.sourceRect.x * w).toFloat()
-            val top = (mosaic.sourceRect.y * h).toFloat()
-            val width = (mosaic.sourceRect.width * w).toFloat()
-            val height = (mosaic.sourceRect.height * h).toFloat()
+            val mapped = OverlayGeometry.overlayRect(content, mosaic.sourceRect)
+            val left = (mapped.x * sx).toFloat()
+            val top = (mapped.y * sy).toFloat()
+            val width = (mapped.width * sx).toFloat()
+            val height = (mapped.height * sy).toFloat()
             val radius = (mosaic.cornerRadius * min(width, height)).toFloat()
             // BLUR mosaics are drawn by MosaicBlurLayer; only spotlight dimming belongs here.
             if (mosaic.style == MosaicEffectStyle.SPOTLIGHT) {
                 val path = Path().apply {
                     fillType = PathFillType.EvenOdd
-                    addRect(Rect(0f, 0f, w, h))
+                    addRect(Rect(cLeft, cTop, cRight, cBottom))
                     addRoundRect(
                         androidx.compose.ui.geometry.RoundRect(
                             left, top, left + width, top + height, CornerRadius(radius, radius),
@@ -854,22 +1130,25 @@ private fun MosaicLayer(scene: FrameScene) {
         scene.screen.focusEffect?.let { focus ->
             val alpha = (focus.effect.dimming * focus.progress).toFloat()
             if (alpha > 0.01f) {
+                val center = OverlayGeometry.focusCenter(content, focus.center.x, focus.center.y)
+                val cx = (center.x * sx).toFloat()
+                val cy = (center.y * sy).toFloat()
+                val half = OverlayGeometry.focusHalfWidth(
+                    content,
+                    focus.effect.clearHalfWidth(min(content.width, content.height)),
+                )
                 if (focus.effect.shape == dev.dogsc.core.model.FocusEffectShape.LINEAR) {
                     val angle = (focus.effect.angleDegrees ?: 0.0) * PI / 180
-                    val cx = (focus.center.x * w).toFloat()
-                    val cy = (focus.center.y * h).toFloat()
-                    val band = (focus.effect.clearHalfWidth(min(w, h).toDouble()) * w).toFloat()
+                    val band = (half * sx).toFloat()
                     rotate((angle * 180 / PI).toFloat(), Offset(cx, cy)) {
-                        drawRect(Color.Black.copy(alpha = alpha), Offset(0f, 0f), Size(w, cy - band))
-                        drawRect(Color.Black.copy(alpha = alpha), Offset(0f, cy + band), Size(w, h - cy - band))
+                        drawRect(Color.Black.copy(alpha = alpha), Offset(cLeft, cTop), Size(cWidth, cy - band - cTop))
+                        drawRect(Color.Black.copy(alpha = alpha), Offset(cLeft, cy + band), Size(cWidth, cBottom - cy - band))
                     }
                 } else {
-                    val cx = (focus.center.x * w).toFloat()
-                    val cy = (focus.center.y * h).toFloat()
-                    val radius = (focus.effect.clearHalfWidth(min(w, h).toDouble()) * w).toFloat()
+                    val radius = (half * sx).toFloat()
                     val path = Path().apply {
                         fillType = PathFillType.EvenOdd
-                        addRect(Rect(0f, 0f, w, h))
+                        addRect(Rect(cLeft, cTop, cRight, cBottom))
                         addOval(Rect(cx - radius, cy - radius, cx + radius, cy + radius))
                     }
                     drawPath(path, Color.Black.copy(alpha = alpha))
@@ -972,31 +1251,28 @@ private fun DrawScope.drawDynamic(
     canvasSize: Size,
     time: Double,
 ) {
-    val colors = when (preset) {
-        DynamicBackgroundPreset.CYBER_DRIFT_GRID -> listOf(Color(0xFF1A1206), Color(0xFF3D2A0C), Color(0xFF0B0B10))
-        DynamicBackgroundPreset.STARFIELD_DOTS -> listOf(Color(0xFF0A0C14), Color(0xFF1A1E2C), Color(0xFF07080C))
-        DynamicBackgroundPreset.AURORA_FLUID -> listOf(Color(0xFF0A1B33), Color(0xFF2C5F8A), Color(0xFFE7EEF5))
-    }
-    val phase = time.toFloat()
-    val driftX = kotlin.math.sin(phase * 0.18f) * size.width * 0.05f
-    val driftY = kotlin.math.cos(phase * 0.14f) * size.height * 0.04f
+    val colors = dev.dogsc.core.scene.DynamicBackgroundGeometry.gradientColors(preset).map { Color(0xFF000000.toInt() or it) }
+    val (dx, dy) = dev.dogsc.core.scene.DynamicBackgroundGeometry.drift(time)
+    val driftX = (dx * size.width).toFloat()
+    val driftY = (dy * size.height).toFloat()
     drawRect(Brush.linearGradient(colors, start = Offset(driftX, driftY), end = Offset(size.width + driftX, size.height + driftY)))
+    // Starfield dots and glow orbs come from the same pure geometry export uses, so the two
+    // backends draw identical motion at any playhead time.
+    val radiusScale = size.minDimension.toDouble()
     if (preset == DynamicBackgroundPreset.STARFIELD_DOTS) {
-        val count = 90
-        for (i in 0 until count) {
-            val x = (((i * 73 + phase * 9) % 997) / 997f) * size.width
-            val y = (((i * 151 + phase * 4) % 991) / 991f) * size.height
-            val radius = 0.6f + (i % 3) * 0.5f
-            drawCircle(Color.White.copy(alpha = 0.18f + (i % 5) * 0.08f), radius, Offset(x, y))
+        for (star in dev.dogsc.core.scene.DynamicBackgroundGeometry.stars(time, radiusScale)) {
+            drawCircle(
+                Color.White.copy(alpha = star.alpha.toFloat()),
+                star.radius.toFloat(),
+                Offset((star.x * size.width).toFloat(), (star.y * size.height).toFloat()),
+            )
         }
     } else {
-        for (i in 0 until 6) {
-            val x = (((i * 211) % 100) / 100f) * size.width + driftX * (i + 1) * 0.3f
-            val y = (((i * 137) % 100) / 100f) * size.height + driftY * (i + 1) * 0.25f
+        for (orb in dev.dogsc.core.scene.DynamicBackgroundGeometry.orbs(time, radiusScale)) {
             drawCircle(
-                Color.White.copy(alpha = 0.035f),
-                size.minDimension * (0.18f + i * 0.05f),
-                Offset(x, y),
+                Color.White.copy(alpha = orb.alpha.toFloat()),
+                orb.radius.toFloat(),
+                Offset((orb.x * size.width).toFloat(), (orb.y * size.height).toFloat()),
             )
         }
     }

@@ -28,6 +28,8 @@ import dev.dogsc.core.scene.FrameScreenChromeKind
 import dev.dogsc.core.scene.FrameScreenChromeScene
 import dev.dogsc.core.scene.FrameScreenDecoration
 import dev.dogsc.core.scene.FrameStickerScene
+import dev.dogsc.core.scene.OverlayGeometry
+import dev.dogsc.core.scene.RenderParams
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -78,7 +80,7 @@ class CanvasFrameRenderer(
             scene.camera?.let { drawCamera(it, camera) }
         }
         if (scene.layerOrder.contains(dev.dogsc.core.scene.FrameLayerRole.STICKERS)) {
-            drawStickers(scene.stickers, stickers)
+            drawStickers(scene, scene.stickers, stickers)
         }
         return output
     }
@@ -97,7 +99,7 @@ class CanvasFrameRenderer(
                 if (bitmap != null) {
                     drawCover(bitmap, 0f, 0f, width.toFloat(), height.toFloat())
                     if (scene.background.blurRadius > 0.1) {
-                        val small = makeBlurred(bitmap, 18)
+                        val small = makeBlurred(bitmap, RenderParams.BackgroundBlurDivisor)
                         paint.alpha = min(255, (scene.background.blurRadius / 96 * 255).toInt()).coerceAtLeast(24)
                         drawCover(small, 0f, 0f, width.toFloat(), height.toFloat())
                         paint.alpha = 255
@@ -182,32 +184,26 @@ class CanvasFrameRenderer(
     }
 
     private fun drawDynamic(preset: DynamicBackgroundPreset, scene: FrameScene) {
-        val colors = when (preset) {
-            DynamicBackgroundPreset.CYBER_DRIFT_GRID -> intArrayOf(Color.rgb(26, 18, 6), Color.rgb(61, 42, 12), Color.rgb(11, 11, 16))
-            DynamicBackgroundPreset.STARFIELD_DOTS -> intArrayOf(Color.rgb(10, 12, 20), Color.rgb(26, 30, 44), Color.rgb(7, 8, 12))
-            DynamicBackgroundPreset.AURORA_FLUID -> intArrayOf(Color.rgb(10, 27, 51), Color.rgb(44, 95, 138), Color.rgb(231, 238, 245))
-        }
-        val phase = scene.time.toFloat()
-        val driftX = kotlin.math.sin(phase * 0.18f) * width * 0.05f
-        val driftY = kotlin.math.cos(phase * 0.14f) * height * 0.04f
+        val geo = dev.dogsc.core.scene.DynamicBackgroundGeometry
+        val colors = geo.gradientColors(preset).map { Color.rgb(Color.red(it), Color.green(it), Color.blue(it)) }.toIntArray()
+        val (dx, dy) = geo.drift(scene.time)
+        val driftX = (dx * width).toFloat()
+        val driftY = (dy * height).toFloat()
         fill.shader = LinearGradient(driftX, driftY, width + driftX, height + driftY, colors, null, Shader.TileMode.CLAMP)
         outputCanvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
         fill.shader = null
+        // Same pure geometry as the preview: identical starfield dots and drifting glow orbs.
+        val radiusScale = min(width, height).toDouble()
         if (preset == DynamicBackgroundPreset.STARFIELD_DOTS) {
-            fill.color = Color.argb(70, 255, 255, 255)
-            for (i in 0 until 100) {
-                val x = (((i * 73 + phase * 9) % 997) / 997f) * width
-                val y = (((i * 151 + phase * 4) % 991) / 991f) * height
-                outputCanvas.drawCircle(x, y, 0.7f + (i % 3) * 0.6f, fill)
+            for (star in geo.stars(scene.time, radiusScale)) {
+                fill.color = Color.argb((star.alpha * 255).toInt().coerceIn(0, 255), 255, 255, 255)
+                outputCanvas.drawCircle((star.x * width).toFloat(), (star.y * height).toFloat(), star.radius.toFloat(), fill)
             }
         } else {
-            fill.shader = RadialGradient(
-                width * 0.7f, height * 0.3f, height * 0.65f,
-                intArrayOf(Color.argb(40, 255, 255, 255), Color.TRANSPARENT),
-                null, Shader.TileMode.CLAMP,
-            )
-            outputCanvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
-            fill.shader = null
+            for (orb in geo.orbs(scene.time, radiusScale)) {
+                fill.color = Color.argb((orb.alpha * 255).toInt().coerceIn(0, 255), 255, 255, 255)
+                outputCanvas.drawCircle((orb.x * width).toFloat(), (orb.y * height).toFloat(), orb.radius.toFloat(), fill)
+            }
         }
     }
 
@@ -251,8 +247,8 @@ class CanvasFrameRenderer(
                 lineTo(quad.bottomLeft.x.toFloat(), (quad.bottomLeft.y + shadow.offset.y).toFloat())
                 close()
             }
-            fill.color = Color.argb((shadow.opacity * 90).toInt(), 0, 0, 0)
-            fill.maskFilter = android.graphics.BlurMaskFilter(max(shadow.radius.toFloat(), 2f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            fill.color = Color.argb((shadow.opacity * RenderParams.ScreenShadowAlpha).toInt(), 0, 0, 0)
+            fill.maskFilter = android.graphics.BlurMaskFilter(max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()), android.graphics.BlurMaskFilter.Blur.NORMAL)
             outputCanvas.drawPath(shadowPath, fill)
             fill.maskFilter = null
         }
@@ -265,7 +261,8 @@ class CanvasFrameRenderer(
             quad.bottomLeft.x.toFloat(), quad.bottomLeft.y.toFloat(),
         )
         if (matrix.setPolyToPoly(src, 0, dst, 0, 4)) {
-            paint.alpha = (frame.opacity * 255).toInt().coerceIn(0, 255)
+            // Sticker "仅背景" suppresses the screen card; fold it into the card alpha.
+            paint.alpha = (frame.opacity * (1.0 - scene.stickerBackdrop.screenSuppression) * 255).toInt().coerceIn(0, 255)
             outputCanvas.drawBitmap(card, matrix, paint)
             paint.alpha = 255
         } else {
@@ -351,21 +348,26 @@ class CanvasFrameRenderer(
             val src = screenSourceRect(screen, frame)
             paint.alpha = 255
             canvas.drawBitmap(screen, src, content, paint)
+            // Sticker backdrop blur: paste a downscaled-blur copy over the whole screen card.
+            val backdropBlur = scene.stickerBackdrop.screenBlur
+            if (backdropBlur > 0.1) {
+                val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor)
+                paint.alpha = (backdropBlur / 80.0 * 235).toInt().coerceIn(0, 255)
+                canvas.drawBitmap(blurred, Rect(0, 0, blurred.width, blurred.height), content, paint)
+                paint.alpha = 255
+            }
         } else {
             fill.color = Color.rgb(35, 37, 43)
             canvas.drawRect(content, fill)
         }
         // Mosaics and focus effects.
         for (mosaic in frame.mosaics) {
-            val left = (mosaic.sourceRect.x * content.width()).toFloat()
-            val top = (mosaic.sourceRect.y * content.height()).toFloat()
-            val right = left + (mosaic.sourceRect.width * content.width()).toFloat()
-            val bottom = top + (mosaic.sourceRect.height * content.height()).toFloat()
-            val rect = RectF(content.left + left, content.top + top, content.left + right, content.top + bottom)
+            val mapped = OverlayGeometry.overlayRect(frame.finalRect, mosaic.sourceRect)
+            val rect = RectF(mapped.x.toFloat(), mapped.y.toFloat(), mapped.right.toFloat(), mapped.bottom.toFloat())
             val r = (mosaic.cornerRadius * min(rect.width(), rect.height())).toFloat()
             if (mosaic.style == MosaicEffectStyle.BLUR) {
                 if (screen != null) {
-                    val blurred = makeBlurred(screen, 12)
+                    val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor)
                     canvas.save()
                     canvas.clipPath(roundedPath(rect, r))
                     paint.alpha = (mosaic.intensity * mosaic.transitionProgress * 235).toInt().coerceIn(0, 255)
@@ -385,27 +387,45 @@ class CanvasFrameRenderer(
             }
         }
         frame.focusEffect?.let { focus ->
+            val region = OverlayGeometry.focusClearRegion(frame.finalRect, focus.effect, focus.center.x, focus.center.y)
+            val cx = region.center.x.toFloat()
+            val cy = region.center.y.toFloat()
+            val half = region.halfWidth.toFloat()
+            // Focus blur: paste a downscaled-blur copy of the screen outside the clear region.
+            val blurStrength = focus.effect.blur * focus.progress
+            if (screen != null && blurStrength > 0.01) {
+                val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor)
+                val outside = Path().apply {
+                    fillType = Path.FillType.EVEN_ODD
+                    addRect(content, Path.Direction.CW)
+                    if (region.isLinear) {
+                        addRect(content.left, cy - half, content.right, cy + half, Path.Direction.CW)
+                    } else {
+                        addCircle(cx, cy, half, Path.Direction.CW)
+                    }
+                }
+                canvas.save()
+                canvas.clipPath(outside)
+                paint.alpha = (blurStrength * 235).toInt().coerceIn(0, 255)
+                canvas.drawBitmap(blurred, Rect(0, 0, blurred.width, blurred.height), content, paint)
+                paint.alpha = 255
+                canvas.restore()
+            }
             val alpha = (focus.effect.dimming * focus.progress * 255).toInt().coerceIn(0, 255)
             if (alpha > 2) {
                 if (focus.effect.shape == dev.dogsc.core.model.FocusEffectShape.LINEAR) {
-                    val cx = content.left + focus.center.x.toFloat() * content.width()
-                    val cy = content.top + focus.center.y.toFloat() * content.height()
-                    val band = (focus.effect.clearHalfWidth(min(content.width(), content.height()).toDouble()) * content.width()).toFloat()
                     val angle = ((focus.effect.angleDegrees ?: 0.0) * PI / 180).toFloat()
                     canvas.save()
                     canvas.rotate((angle * 180 / PI).toFloat(), cx, cy)
                     fill.color = Color.argb(alpha, 0, 0, 0)
-                    canvas.drawRect(content.left, content.top, content.right, cy - band, fill)
-                    canvas.drawRect(content.left, cy + band, content.right, content.bottom, fill)
+                    canvas.drawRect(content.left, content.top, content.right, cy - half, fill)
+                    canvas.drawRect(content.left, cy + half, content.right, content.bottom, fill)
                     canvas.restore()
                 } else {
-                    val cx = content.left + focus.center.x.toFloat() * content.width()
-                    val cy = content.top + focus.center.y.toFloat() * content.height()
-                    val radius = (focus.effect.clearHalfWidth(min(content.width(), content.height()).toDouble()) * content.width()).toFloat()
                     val dim = Path().apply {
                         fillType = Path.FillType.EVEN_ODD
                         addRect(content, Path.Direction.CW)
-                        addCircle(cx, cy, radius, Path.Direction.CW)
+                        addCircle(cx, cy, half, Path.Direction.CW)
                     }
                     fill.color = Color.argb(alpha, 0, 0, 0)
                     canvas.drawPath(dim, fill)
@@ -443,8 +463,8 @@ class CanvasFrameRenderer(
         val radius = scene.cornerRadius.toFloat()
         val clip = roundedPath(rect, radius)
         scene.shadow?.let { shadow ->
-            fill.color = Color.argb((shadow.opacity * 80).toInt(), 0, 0, 0)
-            fill.maskFilter = android.graphics.BlurMaskFilter(max(shadow.radius.toFloat(), 2f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            fill.color = Color.argb((shadow.opacity * RenderParams.CameraShadowAlpha).toInt(), 0, 0, 0)
+            fill.maskFilter = android.graphics.BlurMaskFilter(max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()), android.graphics.BlurMaskFilter.Blur.NORMAL)
             outputCanvas.drawPath(clip, fill)
             fill.maskFilter = null
         }
@@ -492,7 +512,7 @@ class CanvasFrameRenderer(
         }
     }
 
-    private fun drawStickers(stickers: List<FrameStickerScene>, bitmaps: Map<String, Bitmap>) {
+    private fun drawStickers(scene: FrameScene, stickers: List<FrameStickerScene>, bitmaps: Map<String, Bitmap>) {
         for (sticker in stickers.sortedBy { it.layerIndex }) {
             val bitmap = bitmaps[sticker.relativePath] ?: continue
             if (sticker.opacity <= 0.001) continue
@@ -503,9 +523,12 @@ class CanvasFrameRenderer(
             outputCanvas.save()
             outputCanvas.rotate((sticker.rotationRadians * 180 / PI).toFloat(), cx, cy)
             val rect = RectF(cx - targetWidth / 2, cy - targetHeight / 2, cx + targetWidth / 2, cy + targetHeight / 2)
-            val clip = roundedPath(rect, sticker.cornerRadius.toFloat())
+            // cornerRadius is authored in canvas pixels; scale into output pixels (same unit
+            // contract as the preview, which normalizes by canvas width then multiplies by w).
+            val stickerRadius = (sticker.cornerRadius / max(scene.canvasSize.width, 1.0) * width).toFloat()
+            val clip = roundedPath(rect, stickerRadius)
             if (sticker.shadowOpacity > 0) {
-                fill.color = Color.argb((sticker.shadowOpacity * 80).toInt(), 0, 0, 0)
+                fill.color = Color.argb((sticker.shadowOpacity * RenderParams.StickerShadowAlpha).toInt(), 0, 0, 0)
                 fill.maskFilter = android.graphics.BlurMaskFilter(max(sticker.shadowRadius.toFloat(), 1f), android.graphics.BlurMaskFilter.Blur.NORMAL)
                 outputCanvas.drawPath(clip, fill)
                 fill.maskFilter = null

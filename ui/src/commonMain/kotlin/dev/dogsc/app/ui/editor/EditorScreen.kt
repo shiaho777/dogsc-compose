@@ -7,6 +7,11 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import dev.dogsc.app.ui.theme.DogScMotion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -92,13 +97,77 @@ import dev.dogsc.app.ui.formatTimecode
 import dev.dogsc.app.ui.theme.DogScColors
 import kotlin.math.roundToInt
 
+/**
+ * Mobile-native contextual settings: a NON-modal bottom panel inside the editor column, so the
+ * preview stays visible and gives live feedback while tuning (a modal sheet hid the preview —
+ * a desktop habit that does not transfer to touch). Drag the handle to resize; tap to collapse.
+ */
+@Composable
+private fun MobileInspectorSheet(
+    state: DogScAppState,
+    host: DogScHost,
+    height: Dp,
+    onHeightChange: (Dp) -> Unit,
+    onClose: () -> Unit,
+) {
+    val density = LocalDensity.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(height)
+            .background(DogScColors.Panel),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .pointerInput(height) {
+                    detectVerticalDragGestures { change, dragY ->
+                        change.consume()
+                        val deltaDp = with(density) { (-dragY).toDp() }
+                        onHeightChange((height + deltaDp).coerceIn(150.dp, 480.dp))
+                    }
+                }
+                .clickable { onHeightChange(if (height > 260.dp) 170.dp else 340.dp) }
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .width(42.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(DogScColors.PrimaryText.copy(alpha = 0.16f)),
+            )
+            SoftIconButton(
+                Icons.Outlined.ExpandMore,
+                onClick = onClose,
+                contentDescription = "收起设置",
+                size = 28.dp,
+                iconSize = 16.dp,
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp),
+            )
+        }
+        InspectorPanel(
+            state = state,
+            host = host,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            showTabStrip = true,
+        )
+    }
+}
+
 @Composable
 fun EditorScreen(state: DogScAppState, host: DogScHost) {
     val project = state.project ?: return
     var showRenameDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var showInspectorSheet by remember { mutableStateOf(false) }
+    var sheetHeight by remember { mutableStateOf(300.dp) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    // Selecting a canvas/timeline element auto-opens its contextual settings (mobile-native).
+    LaunchedEffect(state.inspectorPanelRequest) {
+        if (state.inspectorPanelRequest > 0) showInspectorSheet = true
+    }
 
     val keyFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { keyFocus.requestFocus() } }
@@ -150,6 +219,17 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
                                 .tourTarget("editor.timeline", LocalTourTargets.current),
                         )
                     }
+                    if (!wide) {
+                        AnimatedVisibility(visible = showInspectorSheet) {
+                            MobileInspectorSheet(
+                                state = state,
+                                host = host,
+                                height = sheetHeight,
+                                onHeightChange = { sheetHeight = it },
+                                onClose = { showInspectorSheet = false },
+                            )
+                        }
+                    }
                 }
                 if (wide) {
                     InspectorPanel(
@@ -165,29 +245,6 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
             }
         }
 
-        if (showInspectorSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showInspectorSheet = false },
-                containerColor = DogScColors.Panel,
-                dragHandle = {
-                    Box(
-                        Modifier
-                            .padding(top = 10.dp, bottom = 4.dp)
-                            .width(42.dp)
-                            .height(4.dp)
-                            .clip(CircleShape)
-                            .background(DogScColors.PrimaryText.copy(alpha = 0.16f)),
-                    )
-                },
-            ) {
-                InspectorPanel(
-                    state = state,
-                    host = host,
-                    modifier = Modifier.fillMaxWidth().height(470.dp),
-                    showTabStrip = true,
-                )
-            }
-        }
     }
 
     if (showRenameDialog) {
@@ -310,7 +367,7 @@ private fun ScenePresetSheet(state: DogScAppState, onDismiss: () -> Unit) {
                             state.applyScenePreset(preset)
                             onDismiss()
                         }, variant = PillVariant.Ghost, compact = true)
-                        SoftIconButton(Icons.Outlined.DeleteOutline, onClick = { state.deleteScenePreset(preset) }, size = 30.dp, iconSize = 15.dp)
+                        SoftIconButton(Icons.Outlined.DeleteOutline, onClick = { state.deleteScenePreset(preset) }, contentDescription = "删除场景预设", size = 30.dp, iconSize = 15.dp)
                     }
                 }
             }
@@ -387,7 +444,7 @@ private fun MarkersSheet(state: DogScAppState, onDismiss: () -> Unit) {
                             state.seekToMarker(marker.id)
                             onDismiss()
                         }, variant = PillVariant.Ghost, compact = true, enabled = outputTime != null)
-                        SoftIconButton(Icons.Outlined.DeleteOutline, onClick = { state.deleteMarker(marker.id) }, size = 30.dp, iconSize = 15.dp)
+                        SoftIconButton(Icons.Outlined.DeleteOutline, onClick = { state.deleteMarker(marker.id) }, contentDescription = "删除标记", size = 30.dp, iconSize = 15.dp)
                     }
                 }
             }
@@ -473,7 +530,7 @@ private fun PreviewStage(state: DogScAppState, modifier: Modifier = Modifier) {
             .fillMaxWidth()
             .background(
                 Brush.radialGradient(
-                    colors = listOf(Color(0xFFF7F7F8), DogScColors.Background),
+                    colors = listOf(DogScColors.StageLight, DogScColors.Background),
                     radius = 1400f,
                 )
             )
@@ -683,11 +740,18 @@ private fun handleEditorKey(state: DogScAppState, event: KeyEvent): Boolean {
         command && event.key == Key.Z && event.isShiftPressed -> { state.redo(); true }
         command && event.key == Key.Z -> { state.undo(); true }
         command && event.key == Key.S -> { state.saveProject(showConfirmation = true); true }
+        command && event.key == Key.C -> { state.copySelection(); true }
+        command && event.key == Key.V && event.isShiftPressed -> { state.pasteAttributes(); true }
+        command && event.key == Key.V -> { state.pasteClip(); true }
         event.key == Key.Spacebar -> { state.togglePlayback(); true }
         event.key == Key.DirectionLeft -> { state.stepFrames(if (event.isShiftPressed) -5 else -1); true }
         event.key == Key.DirectionRight -> { state.stepFrames(if (event.isShiftPressed) 5 else 1); true }
         event.key == Key.S -> { state.splitAtPlayhead(); true }
         event.key == Key.Delete || event.key == Key.Backspace -> { state.deleteSelection(); true }
+        event.key == Key.Escape -> { state.select(EditorSelection.None); true }
+        // Q/W ripple-trim the primary segment under the playhead to the playhead (upstream Q/W).
+        event.key == Key.Q -> { state.rippleTrimToPlayhead(leading = true); true }
+        event.key == Key.W -> { state.rippleTrimToPlayhead(leading = false); true }
         else -> false
     }
 }
@@ -703,10 +767,16 @@ private fun ShortcutSheet(onDismiss: () -> Unit) {
                 "← / →" to "向前 / 向后移动 1 帧",
                 "⇧ + ← / →" to "移动 5 帧",
                 "S" to "在播放头分割",
+                "Q / W" to "波纹修剪片段头 / 尾到播放头",
+                "Esc" to "取消选择",
                 "Delete" to "删除选中项",
+                "长按片段" to "多选片段",
                 "Ctrl/⌘ + Z" to "撤销",
                 "Ctrl/⌘ + Shift + Z" to "重做",
                 "Ctrl/⌘ + S" to "保存项目",
+                "Ctrl/⌘ + C" to "复制缩放片段",
+                "Ctrl/⌘ + V" to "在播放头粘贴片段",
+                "Ctrl/⌘ + Shift + V" to "粘贴片段属性",
                 "双指捏合时间线" to "缩放时间线",
                 "拖动播放头" to "定位画面",
                 "点击片段" to "选中并打开对应参数",

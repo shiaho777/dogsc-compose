@@ -25,6 +25,16 @@ class PinchInjectionTest {
             val ui = instrumentation.uiAutomation
             val target = instrumentation.targetContext
 
+            // Isolate from any prior test: back out of a possibly-open editor to the library.
+            repeat(3) {
+                if (containsText(ui.rootInActiveWindow, "时间线") || containsText(ui.rootInActiveWindow, "Timeline")) {
+                    val dt = SystemClock.uptimeMillis()
+                    ui.injectInputEvent(android.view.KeyEvent(dt, dt, android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_BACK, 0), true)
+                    ui.injectInputEvent(android.view.KeyEvent(dt, SystemClock.uptimeMillis(), android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_BACK, 0), true)
+                    SystemClock.sleep(600)
+                }
+            }
+
             var card: AccessibilityNodeInfo? = null
             val cardDeadline = SystemClock.uptimeMillis() + 15_000
             while (card == null && SystemClock.uptimeMillis() < cardDeadline) {

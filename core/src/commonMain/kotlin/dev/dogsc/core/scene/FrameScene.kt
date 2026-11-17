@@ -96,6 +96,7 @@ sealed class FrameScreenDecoration {
 }
 
 data class FrameMosaicScene(
+    val id: String,
     val sourceRect: NormalizedOverlayRect,
     val cornerRadius: Double,
     val style: MosaicEffectStyle,
@@ -357,6 +358,7 @@ object FrameSceneEvaluator {
         val activeMosaics = project.timeline.mosaicClips.mapNotNull { clip ->
             if (!clip.timing.contains(sampleTime)) return@mapNotNull null
             FrameMosaicScene(
+                id = clip.id,
                 sourceRect = clip.sourceRect,
                 cornerRadius = clip.cornerRadius,
                 style = clip.style,

@@ -202,7 +202,14 @@ class AndroidDogScPlatform(
             .remove("tour_library_seen")
             .remove("tour_record_seen")
             .remove("tour_editor_seen")
+            .remove("tour_any_seen")
             .apply()
+    }
+
+    override fun hasSeenAnyTour(): Boolean = prefs().getBoolean("tour_any_seen", false)
+
+    override fun markAnyTourSeen() {
+        prefs().edit().putBoolean("tour_any_seen", true).apply()
     }
 
     override fun hasSeenOnboarding(): Boolean =

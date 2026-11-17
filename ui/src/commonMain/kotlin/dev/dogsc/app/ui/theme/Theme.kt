@@ -39,23 +39,25 @@ object DogScColors {
     private val LightSelectionWash = Color(0x00000000).copy(alpha = 0.075f)
     private val LightHairline = Color(0x00000000).copy(alpha = 0.065f)
 
-    private val DarkBackgroundColor = Color(0xFF0A0B0D)
-    private val DarkPanelColor = Color(0xFF121317)
-    private val DarkRaisedColor = Color(0xFF1A1B20)
+    // Dark elevation ladder: each surface step is clearly lighter than the one below so cards
+    // and panels read as distinct layers instead of black-on-black.
+    private val DarkBackgroundColor = Color(0xFF0B0C0F)
+    private val DarkPanelColor = Color(0xFF16181D)
+    private val DarkRaisedColor = Color(0xFF21242B)
     private val DarkPrimaryTextColor = Color(0xFFF2F3F5)
     private val DarkSecondaryTextColor = Color(0xFFA7A9B0)
-    private val DarkTertiaryTextColor = Color(0xFF6F7178)
+    private val DarkTertiaryTextColor = Color(0xFF7C7E86)
     private val DarkAccent = Color(0xFFF2F3F5)
-    private val DarkControlWell = Color(0xFFFFFFFF).copy(alpha = 0.08f)
+    private val DarkControlWell = Color(0xFFFFFFFF).copy(alpha = 0.09f)
     private val DarkSelectionWash = Color(0xFFFFFFFF).copy(alpha = 0.14f)
-    private val DarkHairline = Color(0xFFFFFFFF).copy(alpha = 0.10f)
+    private val DarkHairline = Color(0xFFFFFFFF).copy(alpha = 0.12f)
 
     val Background: Color get() = if (darkMode) DarkBackgroundColor else LightBackground
     val Panel: Color get() = if (darkMode) DarkPanelColor else LightPanel
     val Raised: Color get() = if (darkMode) DarkRaisedColor else LightRaised
     val Stage: Color get() = if (darkMode) DarkBackgroundColor else LightBackground
-    val StageLight: Color get() = if (darkMode) Color.White.copy(alpha = 0.06f) else Color.White.copy(alpha = 0.72f)
-    val CardFill: Color get() = if (darkMode) Color.White.copy(alpha = 0.06f) else Color(0xFF1F2126).copy(alpha = 0.045f)
+    val StageLight: Color get() = if (darkMode) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.72f)
+    val CardFill: Color get() = if (darkMode) Color.White.copy(alpha = 0.08f) else Color(0xFF1F2126).copy(alpha = 0.045f)
     val PrimaryText: Color get() = if (darkMode) DarkPrimaryTextColor else LightPrimaryText
     val SecondaryText: Color get() = if (darkMode) DarkSecondaryTextColor else LightSecondaryText
     val TertiaryText: Color get() = if (darkMode) DarkTertiaryTextColor else LightTertiaryText

@@ -62,6 +62,8 @@ sealed interface EditorSelection {
     data class Mosaic(val clipId: String) : EditorSelection
     data class Sticker(val clipId: String) : EditorSelection
     data class Marker(val markerId: String) : EditorSelection
+    /** Multi-select batch (upstream ⇧/⌘ click). Each entry is a single-clip selection. */
+    data class Multi(val items: List<EditorSelection>) : EditorSelection
     data object None : EditorSelection
 }
 
@@ -111,10 +113,15 @@ class DogScAppState(
         private set
     var isPlaying by mutableStateOf(false)
         private set
+    /** True while the user drags the playhead/ruler; shows a live time badge on the timeline. */
+    var isScrubbing by mutableStateOf(false)
     var selection by mutableStateOf<EditorSelection>(EditorSelection.None)
         private set
     var inspectorTab by mutableStateOf(InspectorTab.CANVAS)
     var canvasPane by mutableStateOf(CanvasPane.BACKGROUND)
+    /** Bumped when a canvas/timeline selection should auto-open the contextual inspector sheet. */
+    var inspectorPanelRequest by mutableStateOf(0)
+        private set
     var timelinePixelsPerSecond by mutableStateOf(44f)
     var timelineScroll by mutableStateOf(0f)
     var snappingEnabled by mutableStateOf(true)
@@ -647,6 +654,9 @@ class DogScAppState(
 
     /** Writes pending edits immediately: leaving the editor or the app going to the background. */
     fun flushPendingSave() {
+        // A drag still open when the app backgrounds must settle into history first, or the
+        // process can be killed mid-gesture and lose the whole drag.
+        if (session?.isGestureActive == true) endGesture("调整")
         autosaveJob?.cancel()
         autosaveJob = null
         if (!isDirty) return
@@ -708,6 +718,45 @@ class DogScAppState(
         updateProject(label) { transform(it) }
     }
 
+    /** Opens a transient drag (canvas manipulation, timeline edge trim, position pad). */
+    fun beginGesture() {
+        session?.beginGesture()
+    }
+
+    /**
+     * Mid-drag update: bumps the revision and requests a single-flight preview frame, but
+     * skips waveform/audio/static-media reloads and autosave until the drag ends.
+     */
+    fun previewGesture(transform: (RecorderProject) -> RecorderProject?) {
+        val session = session ?: return
+        if (session.previewGesture(transform)) {
+            sessionRevision++
+            requestPreviewFrame(playhead)
+        }
+    }
+
+    /** Closes the drag as one undo entry, then runs the normal post-edit refresh + autosave. */
+    fun endGesture(label: String) {
+        val session = session ?: return
+        val changed = session.endGesture(label)
+        if (changed) {
+            sessionRevision++
+            onProjectChanged()
+        } else {
+            // Drag ended at baseline: still flush any dirty state from earlier discrete edits.
+            scheduleAutosave()
+        }
+    }
+
+    /** Abandons a drag (e.g. system gesture stole the pointer); restores the baseline frame. */
+    fun cancelGesture() {
+        val session = session ?: return
+        if (!session.isGestureActive) return
+        session.cancelGesture()
+        sessionRevision++
+        requestPreviewFrame(playhead)
+    }
+
     fun updateCanvas(label: String = "调整画面", transform: (CanvasStyle) -> CanvasStyle) {
         updateProject(label) { it.copy(canvas = transform(it.canvas)) }
     }
@@ -735,6 +784,9 @@ class DogScAppState(
     private fun onProjectChanged() {
         requestPreviewFrame(playhead)
         refreshStaticMedia()
+        // During a drag, waveform/audio rebuilds and autosave are deferred to endGesture;
+        // only the single-flight preview frame keeps up with the pointer.
+        if (session?.isGestureActive == true) return
         if (isPlaying) project?.let { platform.refreshPreviewAudioVolume(it, playhead) }
         if (showWaveform) requestWaveform()
         scheduleAutosave()
@@ -947,6 +999,47 @@ class DogScAppState(
         this.selection = selection
     }
 
+    /**
+     * Mobile-native selection: selects the element AND routes the inspector to its tab, then
+     * requests the contextual bottom panel so settings appear without hunting through tabs
+     * (the desktop "click then find the right rail" habit does not transfer to touch).
+     */
+    fun selectAndInspect(selection: EditorSelection) {
+        this.selection = selection
+        inspectorTab = when (selection) {
+            is EditorSelection.Zoom, is EditorSelection.ScreenMotion -> InspectorTab.MOTION
+            is EditorSelection.CameraMotion -> InspectorTab.CAMERA
+            is EditorSelection.Mosaic, is EditorSelection.Sticker -> InspectorTab.CANVAS
+            else -> inspectorTab
+        }
+        if (selection !is EditorSelection.None) inspectorPanelRequest++
+    }
+
+    /**
+     * Additive multi-select (upstream ⇧/⌘ click): toggles [item] in the current selection.
+     * A single selection becomes a Multi; toggling the last item collapses back to None.
+     */
+    fun toggleMultiSelect(item: EditorSelection) {
+        if (item is EditorSelection.None || item is EditorSelection.Multi) return
+        val currentItems = when (val current = selection) {
+            is EditorSelection.Multi -> current.items
+            EditorSelection.None -> emptyList()
+            else -> listOf(current)
+        }
+        val next = if (currentItems.any { sameSelection(it, item) }) {
+            currentItems.filterNot { sameSelection(it, item) }
+        } else {
+            currentItems + item
+        }
+        selection = when (next.size) {
+            0 -> EditorSelection.None
+            1 -> next.first()
+            else -> EditorSelection.Multi(next)
+        }
+    }
+
+    private fun sameSelection(a: EditorSelection, b: EditorSelection): Boolean = a == b
+
     fun deleteSelection() {
         val project = project ?: return
         val current = selection
@@ -982,6 +1075,19 @@ class DogScAppState(
             is EditorSelection.Marker -> {
                 updateProject("删除录制标记") { project ->
                     project.copy(recordingMarkers = project.recordingMarkers.filterNot { it.id == current.markerId })
+                }
+            }
+            is EditorSelection.Multi -> {
+                val zoomIds = current.items.filterIsInstance<EditorSelection.Zoom>().map { it.clipId }.toSet()
+                val screenIds = current.items.filterIsInstance<EditorSelection.ScreenMotion>().map { it.clipId }.toSet()
+                val cameraIds = current.items.filterIsInstance<EditorSelection.CameraMotion>().map { it.clipId }.toSet()
+                val mosaicIds = current.items.filterIsInstance<EditorSelection.Mosaic>().map { it.clipId }.toSet()
+                val stickerIds = current.items.filterIsInstance<EditorSelection.Sticker>().map { it.clipId }.toSet()
+                val markerIds = current.items.filterIsInstance<EditorSelection.Marker>().map { it.markerId }.toSet()
+                updateProject("删除选中片段") { p ->
+                    val trimmed = TimelineEditor.deleteClips(p, zoomIds, screenIds, cameraIds, mosaicIds, stickerIds)
+                    if (markerIds.isEmpty()) trimmed
+                    else trimmed.copy(recordingMarkers = trimmed.recordingMarkers.filterNot { it.id in markerIds })
                 }
             }
             EditorSelection.None -> Unit
@@ -1021,7 +1127,7 @@ class DogScAppState(
         if (leading) {
             val newStart = (segment.sourceStart + deltaSeconds * segment.playbackRate)
                 .coerceIn(previousSourceEnd, segment.sourceEnd - 0.08 * segment.playbackRate)
-            updateProject("裁切片段") { current ->
+            val transform: (RecorderProject) -> RecorderProject = { current ->
                 current.copy(timeline = current.timeline.copy(
                     sourceSequence = dev.dogsc.core.model.SourceSequence.Edited(
                         map.segments.map {
@@ -1040,10 +1146,13 @@ class DogScAppState(
                     )
                 ))
             }
+            // During an edge drag each event streams through the gesture channel; the whole
+            // drag settles as one undo entry on release. Discrete trims still commit normally.
+            if (session?.isGestureActive == true) previewGesture(transform) else updateProject("裁切片段", transform)
         } else {
             val newEnd = (segment.sourceEnd + deltaSeconds * segment.playbackRate)
                 .coerceIn(segment.sourceStart + 0.08 * segment.playbackRate, nextSourceStart)
-            updateProject("裁切片段") { current ->
+            val transform: (RecorderProject) -> RecorderProject = { current ->
                 current.copy(timeline = current.timeline.copy(
                     sourceSequence = dev.dogsc.core.model.SourceSequence.Edited(
                         map.segments.map {
@@ -1062,6 +1171,7 @@ class DogScAppState(
                     )
                 ))
             }
+            if (session?.isGestureActive == true) previewGesture(transform) else updateProject("裁切片段", transform)
         }
     }
 
@@ -1141,6 +1251,29 @@ class DogScAppState(
                     TimelineEditor.splitPrimary(it, sourceDuration, playhead)
                 }
             }
+        }
+    }
+
+    /**
+     * Ripple-trim the primary segment under the playhead (upstream Q/W): Q removes from the
+     * segment start to the playhead, W from the playhead to the segment end. The gap closes
+     * (ripple) so the timeline stays continuous.
+     */
+    fun rippleTrimToPlayhead(leading: Boolean) {
+        val project = project ?: return
+        val map = TimelineEditor.timelineMap(project, sourceDuration)
+        val segment = map.segments.firstOrNull { playhead >= it.outputStart && playhead <= it.outputEnd } ?: run {
+            showToast("播放头不在主片段上", isError = true)
+            return
+        }
+        val from = if (leading) segment.outputStart else playhead
+        val to = if (leading) playhead else segment.outputEnd
+        if (to - from < 0.04) {
+            showToast("没有可修剪的范围", isError = true)
+            return
+        }
+        updateProject(if (leading) "波纹修剪片段头" else "波纹修剪片段尾") {
+            TimelineEditor.deletePrimaryRange(it, sourceDuration, from, to)
         }
     }
 
@@ -1469,8 +1602,68 @@ class DogScAppState(
         val project = project ?: return time
         if (!snappingEnabled) return time
         val secondsPerPixel = 1.0 / timelinePixelsPerSecond
-        val threshold = 7f * secondsPerPixel
-        return TimelineEditor.snapTime(time, TimelineEditor.clipBoundaries(project, sourceDuration), threshold)
+        // Touch-enlarged capture threshold (upstream 7px mouse -> 12dp touch).
+        val threshold = 12f * secondsPerPixel
+        val snapped = TimelineEditor.snapTime(time, TimelineEditor.clipBoundaries(project, sourceDuration), threshold)
+        if (snapped != time) triggerSnapPulse(snapped)
+        return snapped
+    }
+
+    /** Clipboard for clip copy/paste (upstream ⌘C/⌘V/⌘⇧V). Holds a zoom clip id snapshot. */
+    private var copiedZoomId: String? = null
+
+    /** Copies the selected zoom clip's attributes to the clipboard. */
+    fun copySelection() {
+        when (val current = selection) {
+            is EditorSelection.Zoom -> {
+                copiedZoomId = current.clipId
+                showToast("已复制缩放片段")
+            }
+            else -> showToast("请先选中一个缩放片段", isError = true)
+        }
+    }
+
+    /** Pastes the copied zoom clip at the playhead as a new clip. */
+    fun pasteClip() {
+        val sourceId = copiedZoomId ?: run {
+            showToast("剪贴板为空", isError = true)
+            return
+        }
+        updateProject("粘贴缩放片段") {
+            TimelineEditor.duplicateZoom(it, sourceId, playhead, outputDuration)
+        }
+    }
+
+    /** Pastes only the copied clip's attributes onto the selected zoom clip (upstream ⌘⇧V). */
+    fun pasteAttributes() {
+        val sourceId = copiedZoomId ?: run {
+            showToast("剪贴板为空", isError = true)
+            return
+        }
+        val targetId = (selection as? EditorSelection.Zoom)?.clipId ?: run {
+            showToast("请先选中目标缩放片段", isError = true)
+            return
+        }
+        updateProject("粘贴片段属性") {
+            TimelineEditor.transferZoomAttributes(it, sourceId, targetId)
+        }
+    }
+
+    /**
+     * Timeline drag edge auto-scroll: -1 scroll left, +1 scroll right, 0 idle. Set by the drag
+     * handler when the pointer nears the viewport edge; consumed by a scroll loop in the view.
+     */
+    var timelineDragEdge by mutableStateOf(0)
+
+    /** Magnetic-snap pulse ring (upstream EditorTimelineMagneticSnap): time + monotonic id. */
+    var snapPulseTime by mutableStateOf<Double?>(null)
+        private set
+    var snapPulseId by mutableStateOf(0L)
+        private set
+
+    fun triggerSnapPulse(time: Double) {
+        snapPulseTime = time
+        snapPulseId++
     }
 }
 

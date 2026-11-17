@@ -150,6 +150,52 @@ Last updated: 2026-11-12.
 - Found and fixed: editor commits did not recompose the UI (every add/edit button looked dead until another state change); no autosave (edits lost on process death); export header ignored current selection and source size; export sheet stayed on 取消导出 after success.
 - Same round: export range slider was only imported, never rendered; timeline drags were cancelled after the first delta and clip moves used per-event deltas; primary edge trimming was unreachable and the validator rejected reorders; mosaic preview was a flat overlay; the canvas colour palette crashed the 画面 inspector; the audio mixer read retimed audio at 1× and mapped gain once per second; AAC priming shifted audio ~43 ms; recordings were unrecoverable after a kill; retimed audio lost pitch. All fixed and listed in the table above.
 
+### 2026-11-16 excellence pass (emulator-5554, Android 15)
+
+- `:core:jvmTest` — 62 tests green (added gesture-channel, overlay-geometry, hit-testing, multi-select, attribute-transfer, camera-sync-anchor suites). `:ui:testDebugUnitTest` — 2 green. Instrumentation — `PinchInjectionTest` + `CanvasManipulationInjectionTest` both green together (OK 2 tests).
+- Transient gesture channel: a 200-event drag produces exactly one undo entry; discrete edits mid-drag settle the gesture first; invalid preview samples are rejected without crashing (model `init` require() guarded).
+- Canvas direct manipulation verified by injected one-finger drag: preview pixels change (>400 px diff), selection chrome + snap guides + numeric capsule render; corner resize and sticker rotation handle implemented.
+- Preview/export parity: focus blur/softness and sticker backdrop now rendered in both backends; mosaic/focus coordinates unified to screen-content rect (golden-value tests); dynamic backgrounds share `DynamicBackgroundGeometry`; shadows use real low-res blur in preview.
+- Export: Surface-input encoder verified end-to-end — 12.03 s 1280×720/60 H.264+AAC, frame extraction shows correct color bars (no green/cast). Fixed a process-abort caused by `eglTerminate` on the shared default display (EGL_NOT_INITIALIZED in the Compose RenderThread); release now destroys only its own surface/context.
+- Honest perf finding: on the software-GL emulator the Surface path (~10 s for 721 frames) is not faster than the CPU native-YUV path (~9 s) at 720p — encoding is ~3 ms either way; the bottleneck is CPU Canvas rendering. GPU shader rendering (6b) is the real lever and needs physical-device hardware GL; not claimed done.
+- Rotated-source scrubbing: frame-level LRU cache (6 frames, quantized to 30 fps buckets) added to the retriever fallback.
+- Data safety: rolling `previous/project.{1,2,3}.json` backups on every save.
+- UI: page transitions (AnimatedContent, reduced-motion aware), dark-mode leaks fixed (stage gradient + library card now theme tokens), bar sliders with embedded value + double-tap exact entry, inspector sliding tab capsule, magnetic-snap pulse ring, timeline edge auto-scroll, missing icon contentDescriptions filled.
+
+### 2026-11-16 visual-quality pass (emulator-5554)
+
+Addressed the "looks like a demo" critique with a polish-only pass (no feature changes), verified by light+dark screenshots of library / record / editor:
+
+- **Coach marks fixed**: the spotlight previously mixed `boundsInWindow` with `localToWindow`, offsetting the white ring by the status bar (looked like a debug artifact) and re-popping on every visit. Now uses one root coordinate space (`boundsInRoot`), an even-odd scrim with a soft spotlight + thin theme-accent ring, an explanation card anchored beside the target, step dots + crossfade, and a global once-per-install gate (replay stays in Settings).
+- **Dark elevation ladder**: background/panel/raised pulled apart (#0B0C0F / #16181D / #21242B) with stronger hairlines and dark-visible card shadows, so surfaces read as layers instead of black-on-black.
+- **Library redesign**: thumbnails fill the 16:9 frame edge-to-edge with a bottom scrim (no more letterboxed blur), glass duration badge, card press-scale, skeleton loading cards.
+- **Record setup**: "已选" became a mint pill badge; group cards read clearly in both themes.
+- **Launch splash**: added `values-night` dark launch theme + window background so cold start no longer flashes white in dark mode.
+- Tests stay green: 62 core + 2 UI + 2 instrumentation.
+
+### 2026-11-16 mobile-native interaction pass (emulator-5554)
+
+Closed the desktop→mobile experience gap (the editor was a desktop right-rail inspector + horizontal timeline squeezed onto a phone):
+
+- **Contextual selection**: tapping a canvas element or timeline clip now selects it AND routes the inspector to its tab and opens the settings panel (`selectAndInspect`), instead of the desktop "click then hunt the right rail" habit. Routing locked by core `SelectionRoutingTest`.
+- **Non-modal settings panel**: the mobile inspector moved from a ModalBottomSheet (which hid the preview) to an in-column bottom panel with a draggable height handle, so the preview stays visible and gives live feedback while tuning. Wide layouts keep the side rail.
+- **View zoom for small screens**: a zoom control magnifies the preview (2x); once zoomed, pinch adjusts (1–4x), single-finger pans, double-tap/button resets. At 1x the single finger belongs to element manipulation (parent gestures detach so they don't steal the drag).
+- **Floating quick-edit bar**: selected sticker/mosaic shows copy / delete / layer front-back / open-settings within thumb reach (mobile adaptation of upstream EditorCanvasOverlayQuickControls).
+- **Fine slider mode**: long-press a bar slider enters 5x-finer travel (touch substitute for desktop Shift-drag), with a mint fill + "精调" label.
+- Core sticker duplicate / reorder helpers added.
+- Tests green: 65 core + 2 UI + 2 instrumentation. Injection asserts the deterministic zoom path; single-finger element drag verified via adb swipe (injected single-pointer streams were flaky under emulator gesture arbitration).
+
+### 2026-11-17 detail sweep (emulator-5554)
+
+Micro-interaction and ergonomics polish, no feature changes:
+
+- **Timeline clip chrome**: selection outline + edge-trim handle pills now fade per clip over 140 ms (upstream EditorTimelineClipChrome timing) instead of popping; animated outside DrawScope via per-id Animatables, covers primary segments and multi-select too.
+- **Scrub time badge**: dragging the ruler shows a live timecode capsule next to the playhead so the finger doesn't hide the readout; cleared on drag end/cancel.
+- **Smooth button zoom**: timeline zoom −/＋/fit buttons animate over 180 ms (chained presses retarget); pinch/wheel stay direct to avoid lag.
+- **Touch targets**: timeline toolbar and canvas quick-bar icons raised from 28/34 dp to 32/40 dp.
+- **Haptics**: bar-slider long-press fine mode and switch toggles now tick.
+- Verified export range slider already themed; remaining hard-coded colors are intentional artwork (empty-state illustration, color-bar fixture), not theme leaks.
+
 ## Known limits
 
 1. Performance headroom: the CPU Canvas renderer exports a 57.5 s timeline at ~1× realtime; a GPU renderer and multi-hour profiling remain future work.

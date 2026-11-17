@@ -81,6 +81,7 @@ import dev.dogsc.core.model.MosaicEffectStyle
 import dev.dogsc.core.model.NormalizedOverlayRect
 import dev.dogsc.core.model.NormalizedPoint
 import dev.dogsc.core.model.OverlayTiming
+import dev.dogsc.core.model.RecorderProject
 import dev.dogsc.core.model.ScreenMotionState
 import dev.dogsc.core.model.SourceSequence
 import dev.dogsc.core.model.ZoomEasingPreset
@@ -119,6 +120,16 @@ fun TimelinePanel(
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var showAddMenu by remember { mutableStateOf(false) }
     var showRestoreMenu by remember { mutableStateOf(false) }
+    // Button zoom animates smoothly; pinch/wheel set the scale directly (no animation lag).
+    var zoomTarget by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(zoomTarget) {
+        val t = zoomTarget ?: return@LaunchedEffect
+        androidx.compose.animation.core.Animatable(state.timelinePixelsPerSecond).animateTo(
+            t,
+            androidx.compose.animation.core.tween(180),
+        ) { state.timelinePixelsPerSecond = value }
+        zoomTarget = null
+    }
 
     Column(modifier.background(DogScColors.Panel)) {
         Row(
@@ -146,7 +157,7 @@ fun TimelinePanel(
                 selected = state.showWaveform,
             )
             Box {
-                SoftIconButton(Icons.Outlined.Add, onClick = { showAddMenu = true }, contentDescription = "添加效果", size = 28.dp, iconSize = 15.dp)
+                SoftIconButton(Icons.Outlined.Add, onClick = { showAddMenu = true }, contentDescription = "添加效果", size = 32.dp, iconSize = 16.dp)
                 DropdownMenu(expanded = showAddMenu, onDismissRequest = { showAddMenu = false }) {
                     DropdownMenuItem(
                         text = { Text("缩放动画") },
@@ -196,20 +207,20 @@ fun TimelinePanel(
                 }
             }
             SoftIconButton(Icons.Outlined.Remove, onClick = {
-                state.timelinePixelsPerSecond = (state.timelinePixelsPerSecond / 1.35f).coerceIn(4f, 400f)
-            }, contentDescription = "缩小时间线", size = 28.dp, iconSize = 15.dp)
+                zoomTarget = ((zoomTarget ?: state.timelinePixelsPerSecond) / 1.35f).coerceIn(4f, 400f)
+            }, contentDescription = "缩小时间线", size = 32.dp, iconSize = 16.dp)
             SoftIconButton(Icons.Outlined.Add, onClick = {
-                state.timelinePixelsPerSecond = (state.timelinePixelsPerSecond * 1.35f).coerceIn(4f, 400f)
-            }, contentDescription = "放大时间线", size = 28.dp, iconSize = 15.dp)
+                zoomTarget = ((zoomTarget ?: state.timelinePixelsPerSecond) * 1.35f).coerceIn(4f, 400f)
+            }, contentDescription = "放大时间线", size = 32.dp, iconSize = 16.dp)
             SoftIconButton(
                 Icons.Outlined.AutoAwesome,
                 onClick = {
                     val viewport = 320f
-                    state.timelinePixelsPerSecond = (viewport / max(state.outputDuration, 1.0)).toFloat().coerceIn(4f, 400f)
+                    zoomTarget = (viewport / max(state.outputDuration, 1.0)).toFloat().coerceIn(4f, 400f)
                 },
                 contentDescription = "适应完整时间线",
-                size = 28.dp,
-                iconSize = 15.dp,
+                size = 32.dp,
+                iconSize = 16.dp,
             )
             Box {
                 SoftIconButton(
@@ -265,6 +276,18 @@ fun TimelinePanel(
                     state.timelinePixelsPerSecond = (viewportWidth.value / state.outputDuration.toFloat()).coerceIn(4f, 400f)
                 }
             }
+            // Drag edge auto-scroll: while a clip drag parks the pointer near the viewport edge,
+            // keep scrolling so long timelines stay reachable without lifting the finger.
+            LaunchedEffect(state.timelineDragEdge) {
+                val edge = state.timelineDragEdge
+                if (edge == 0) return@LaunchedEffect
+                val stepPx = with(density) { 18.dp.toPx() }.roundToInt()
+                while (state.timelineDragEdge == edge) {
+                    val target = (scroll.value + edge * stepPx).coerceIn(0, scroll.maxValue)
+                    scroll.scrollTo(target)
+                    kotlinx.coroutines.delay(40)
+                }
+            }
             Row(Modifier.fillMaxSize()) {
                 TrackHeaders(state = state)
                 Box(
@@ -298,6 +321,16 @@ fun TimelinePanel(
                     // Drawn separately so the 60 Hz playhead does not redraw filmstrip and clips.
                     PlayheadOverlay(
                         state = state,
+                        modifier = Modifier
+                            .width(contentWidth)
+                            .fillMaxHeight(),
+                    )
+                    // Magnetic-snap pulse ring at the snapped boundary.
+                    val density = LocalDensity.current
+                    val contentWidthPx = with(density) { contentWidth.toPx() }
+                    TimelineSnapPulse(
+                        state = state,
+                        contentWidthPx = contentWidthPx,
                         modifier = Modifier
                             .width(contentWidth)
                             .fillMaxHeight(),
@@ -394,6 +427,43 @@ private fun TimelineCanvas(
     var lastX by remember { mutableStateOf(0f) }
     var dragStartX by remember { mutableStateOf(0f) }
 
+    // Selection chrome fades per clip (composable animation must run OUTSIDE DrawScope).
+    val selectedIds: Set<String> = when (val sel = state.selection) {
+        is EditorSelection.Primary -> setOf(sel.segmentId)
+        is EditorSelection.Zoom -> setOf(sel.clipId)
+        is EditorSelection.ScreenMotion -> setOf(sel.clipId)
+        is EditorSelection.CameraMotion -> setOf(sel.clipId)
+        is EditorSelection.Mosaic -> setOf(sel.clipId)
+        is EditorSelection.Sticker -> setOf(sel.clipId)
+        is EditorSelection.Multi -> sel.items.mapNotNull {
+            when (it) {
+                is EditorSelection.Primary -> it.segmentId
+                is EditorSelection.Zoom -> it.clipId
+                is EditorSelection.ScreenMotion -> it.clipId
+                is EditorSelection.CameraMotion -> it.clipId
+                is EditorSelection.Mosaic -> it.clipId
+                is EditorSelection.Sticker -> it.clipId
+                else -> null
+            }
+        }.toSet()
+        else -> emptySet()
+    }
+    val chromeAnimatables = remember { mutableMapOf<String, androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>>() }
+    LaunchedEffect(selectedIds) {
+        (chromeAnimatables.keys.toSet() + selectedIds).forEach { id ->
+            val anim = chromeAnimatables.getOrPut(id) {
+                androidx.compose.animation.core.Animatable(if (id in selectedIds) 1f else 0f)
+            }
+            launch {
+                anim.animateTo(
+                    if (id in selectedIds) 1f else 0f,
+                    androidx.compose.animation.core.tween(140),
+                )
+                if (id !in selectedIds && anim.value <= 0.01f) chromeAnimatables.remove(id)
+            }
+        }
+    }
+
     Canvas(
         modifier = modifier
             .pointerInput(Unit) {
@@ -419,21 +489,36 @@ private fun TimelineCanvas(
             }
             .pointerInput(project, state.timelinePixelsPerSecond, state.snappingEnabled) {
                 val density = this
-                detectTapGestures(onPress = { downPosition = it }, onTap = { offset ->
-                    val time = (offset.x / size.width * state.outputDuration).coerceIn(0.0, state.outputDuration)
-                    val hit = hitTest(state, offset.x, offset.y, size.width, size.height, density)
-                    when (hit) {
-                        is TimelineHit.Ruler, TimelineHit.Empty -> {
-                            state.seekTo(state.nearestSnap(time))
-                            state.select(EditorSelection.None)
+                detectTapGestures(
+                    onPress = { downPosition = it },
+                    onTap = { offset ->
+                        val time = (offset.x / size.width * state.outputDuration).coerceIn(0.0, state.outputDuration)
+                        val hit = hitTest(state, offset.x, offset.y, size.width, size.height, density)
+                        when (hit) {
+                            is TimelineHit.Ruler, TimelineHit.Empty -> {
+                                state.seekTo(state.nearestSnap(time))
+                                state.select(EditorSelection.None)
+                            }
+                            else -> {
+                                state.seekTo(time, updatePreview = false)
+                                // A plain tap while a multi-select batch is active adds to it;
+                                // otherwise it replaces the selection (upstream ⇧/⌘ behavior).
+                                if (state.selection is EditorSelection.Multi) {
+                                    state.toggleMultiSelect(hit.toSelection())
+                                } else {
+                                    state.selectAndInspect(hit.toSelection())
+                                }
+                            }
                         }
-                        else -> {
-                            state.seekTo(time, updatePreview = false)
-                            state.select(hit.toSelection())
+                    },
+                    onLongPress = { offset ->
+                        val hit = hitTest(state, offset.x, offset.y, size.width, size.height, density)
+                        if (hit !is TimelineHit.Ruler && hit != TimelineHit.Empty) {
+                            state.toggleMultiSelect(hit.toSelection())
                             focusInspector(state, hit)
                         }
-                    }
-                })
+                    },
+                )
             }
             // Keyed on Unit: every edit changes the project, and re-keying would cancel the drag
             // after the first delta (which is what made clip drags move by a few milliseconds).
@@ -481,15 +566,32 @@ private fun TimelineCanvas(
                             }
                             else -> Unit
                         }
+                        // Clip drags (move/resize/trim) stream through the transient channel and
+                        // settle as one undo entry; ruler scrubbing stays live without a gesture.
+                        when (hit) {
+                            is TimelineHit.Primary, is TimelineHit.Zoom, is TimelineHit.Screen,
+                            is TimelineHit.Camera, is TimelineHit.Mosaic, is TimelineHit.Sticker ->
+                                state.beginGesture()
+                            else -> Unit
+                        }
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
                         val duration = state.outputDuration
                         lastX += dragAmount.x
+                        // Edge auto-scroll: park the pointer near either end of the visible content
+                        // and the timeline keeps scrolling under the finger.
+                        val edgeMargin = size.width * 0.08f
+                        state.timelineDragEdge = when {
+                            change.position.x < edgeMargin -> -1
+                            change.position.x > size.width - edgeMargin -> 1
+                            else -> 0
+                        }
                         // Clips move with the total pointer travel, not one event's delta.
                         val totalDelta = ((lastX - dragStartX) / size.width * duration)
                         when (val hit = dragHit) {
                             is TimelineHit.Ruler, TimelineHit.Empty -> {
+                                state.isScrubbing = true
                                 state.seekTo((lastX / size.width * duration).coerceIn(0.0, duration))
                             }
                             is TimelineHit.Primary -> {
@@ -522,16 +624,16 @@ private fun TimelineCanvas(
                                     hit.leading -> originalEnd
                                     else -> (originalEnd + totalDelta).coerceIn(originalStart + 0.08, duration)
                                 }
-                                state.updateProject("移动缩放片段") {
+                                state.previewGesture {
                                     TimelineEditor.updateZoom(it, hit.id) { c ->
                                         c.copy(startTime = movedStart, endTime = movedEnd)
                                     }
                                 }
                             }
-                            is TimelineHit.Screen -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, ScreenTrack)
-                            is TimelineHit.Camera -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, CameraTrack)
-                            is TimelineHit.Mosaic -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, MosaicTrack)
-                            is TimelineHit.Sticker -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, StickerTrack)
+                            is TimelineHit.Screen -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, ScreenTrack, preview = true)
+                            is TimelineHit.Camera -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, CameraTrack, preview = true)
+                            is TimelineHit.Mosaic -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, MosaicTrack, preview = true)
+                            is TimelineHit.Sticker -> updateTiming(state, hit.id, totalDelta, originalStart, originalEnd, duration, StickerTrack, preview = true)
                             else -> Unit
                         }
                     },
@@ -545,13 +647,22 @@ private fun TimelineCanvas(
                                 val map = TimelineEditor.timelineMap(current, state.sourceDuration)
                                 val targetIndex = map.segments.indexOfLast { it.outputStart <= targetTime }
                                     .coerceAtLeast(0)
-                                state.movePrimarySegment(hit.segmentId, targetIndex)
+                                // Fold the reorder into the same drag so move+reorder is one undo entry.
+                                state.previewGesture {
+                                    TimelineEditor.movePrimarySegment(it, state.sourceDuration, hit.segmentId, targetIndex)
+                                }
                             }
                         }
+                        state.endGesture("调整时间线")
+                        state.timelineDragEdge = 0
+                        state.isScrubbing = false
                         dragHit = null
                         downPosition = androidx.compose.ui.geometry.Offset.Zero
                     },
                     onDragCancel = {
+                        state.cancelGesture()
+                        state.timelineDragEdge = 0
+                        state.isScrubbing = false
                         dragHit = null
                         downPosition = androidx.compose.ui.geometry.Offset.Zero
                     },
@@ -625,7 +736,6 @@ private fun TimelineCanvas(
             val segmentEnd = outputStart + segment.outputDuration
             val left = (segmentStart * pps).toFloat()
             val right = (segmentEnd * pps).toFloat()
-            val selected = (state.selection as? EditorSelection.Primary)?.segmentId == segment.id
             val top = primaryTop + 3f
             val bottom = primaryBottom - 3f
             clipRect(left, top, right, bottom) {
@@ -668,9 +778,10 @@ private fun TimelineCanvas(
                     drawLine(Color.White.copy(alpha = 0.85f), Offset(left, top), Offset(left, bottom), 2f)
                 }
             }
-            if (selected) {
+            val chromeAlpha = chromeAnimatables[segment.id]?.value ?: 0f
+            if (chromeAlpha > 0.01f) {
                 drawRoundRect(
-                    DogScColors.PrimaryText,
+                    DogScColors.PrimaryText.copy(alpha = chromeAlpha),
                     Offset(left, top),
                     Size(max(right - left, 2f), bottom - top),
                     CornerRadius(7f),
@@ -703,7 +814,7 @@ private fun TimelineCanvas(
         // Effect tracks.
         if ("zoom" !in state.hiddenTracks) {
             for (clip in project.timeline.zoomClips) {
-                val selected = (state.selection as? EditorSelection.Zoom)?.clipId == clip.id
+                val chrome = chromeAnimatables[clip.id]?.value ?: 0f
                 drawClip(
                     textMeasurer,
                     left = (clip.startTime * pps).toFloat(),
@@ -713,13 +824,13 @@ private fun TimelineCanvas(
                     color = DogScColors.ZoomClip,
                     ink = DogScColors.ZoomInk,
                     label = dev.dogsc.app.ui.Loc.t("缩放 ${formatScale(clip.scale)} · ${if (clip.origin == dev.dogsc.core.model.ZoomKeyframeOrigin.AUTOMATIC) "自动" else "手动"}"),
-                    selected = selected,
+                    selectionAlpha = chrome,
                 )
             }
         }
         if ("screen" !in state.hiddenTracks) {
             for (clip in project.timeline.screenMotionClips) {
-                val selected = (state.selection as? EditorSelection.ScreenMotion)?.clipId == clip.id
+                val chrome = chromeAnimatables[clip.id]?.value ?: 0f
                 drawClip(
                     textMeasurer,
                     left = (clip.timing.startTime * pps).toFloat(),
@@ -729,13 +840,13 @@ private fun TimelineCanvas(
                     color = DogScColors.ScreenClip,
                     ink = DogScColors.SecondaryText,
                     label = dev.dogsc.app.ui.Loc.t("屏幕 3D"),
-                    selected = selected,
+                    selectionAlpha = chrome,
                 )
             }
         }
         if (project.media?.camera != null && "camera" !in state.hiddenTracks) {
             for (clip in project.timeline.cameraMotionClips) {
-                val selected = (state.selection as? EditorSelection.CameraMotion)?.clipId == clip.id
+                val chrome = chromeAnimatables[clip.id]?.value ?: 0f
                 drawClip(
                     textMeasurer,
                     left = (clip.timing.startTime * pps).toFloat(),
@@ -745,13 +856,13 @@ private fun TimelineCanvas(
                     color = DogScColors.CameraClip,
                     ink = DogScColors.CameraInk,
                     label = dev.dogsc.app.ui.Loc.t("摄像运动"),
-                    selected = selected,
+                    selectionAlpha = chrome,
                 )
             }
         }
         if ("mosaic" !in state.hiddenTracks) {
             for (clip in project.timeline.mosaicClips) {
-                val selected = (state.selection as? EditorSelection.Mosaic)?.clipId == clip.id
+                val chrome = chromeAnimatables[clip.id]?.value ?: 0f
                 drawClip(
                     textMeasurer,
                     left = (clip.timing.startTime * pps).toFloat(),
@@ -761,13 +872,13 @@ private fun TimelineCanvas(
                     color = DogScColors.MosaicClip,
                     ink = DogScColors.MosaicInk,
                     label = dev.dogsc.app.ui.Loc.t(if (clip.style == MosaicEffectStyle.SPOTLIGHT) "突出" else "打码"),
-                    selected = selected,
+                    selectionAlpha = chrome,
                 )
             }
         }
         if ("sticker" !in state.hiddenTracks) {
             for (clip in project.timeline.stickerClips) {
-                val selected = (state.selection as? EditorSelection.Sticker)?.clipId == clip.id
+                val chrome = chromeAnimatables[clip.id]?.value ?: 0f
                 drawClip(
                     textMeasurer,
                     left = (clip.timing.startTime * pps).toFloat(),
@@ -777,7 +888,7 @@ private fun TimelineCanvas(
                     color = DogScColors.StickerClip,
                     ink = DogScColors.StickerInk,
                     label = dev.dogsc.app.ui.Loc.t("贴图"),
-                    selected = selected,
+                    selectionAlpha = chrome,
                 )
             }
         }
@@ -796,6 +907,7 @@ private fun TimelineCanvas(
 
 @Composable
 private fun PlayheadOverlay(state: DogScAppState, modifier: Modifier = Modifier) {
+    val textMeasurer = rememberTextMeasurer()
     Canvas(modifier) {
         val duration = max(state.outputDuration, 0.001)
         val playheadX = (state.playhead / duration * size.width).toFloat()
@@ -809,6 +921,19 @@ private fun PlayheadOverlay(state: DogScAppState, modifier: Modifier = Modifier)
             close()
         }
         drawPath(handle, DogScColors.Playhead)
+        // Live time badge while scrubbing so the finger doesn't hide the readout.
+        if (state.isScrubbing) {
+            val label = dev.dogsc.app.ui.formatTimecode(state.playhead)
+            val layout = textMeasurer.measure(label, TextStyle(color = Color.White, fontSize = 10.sp))
+            val padX = 6f
+            val padY = 3f
+            val bw = layout.size.width + padX * 2
+            val bh = layout.size.height + padY * 2
+            val bx = (playheadX - bw / 2f).coerceIn(2f, (size.width - bw - 2f).coerceAtLeast(2f))
+            val by = 16f
+            drawRoundRect(Color(0xCC1A1A1A), Offset(bx, by), Size(bw, bh), CornerRadius(bh / 2f))
+            drawText(layout, topLeft = Offset(bx + padX, by + padY))
+        }
     }
 }
 
@@ -826,11 +951,12 @@ private fun updateTiming(
     originalEnd: Double,
     duration: Double,
     kind: TrackKind,
+    preview: Boolean = false,
 ) {
     val length = originalEnd - originalStart
     val start = (originalStart + delta).coerceIn(0.0, max(duration - length, 0.0))
     val end = start + length
-    state.updateProject("移动动画片段") { project ->
+    val transform: (RecorderProject) -> RecorderProject = { project ->
         when (kind) {
             TrackKind.Screen -> project.copy(timeline = project.timeline.copy(
                 screenMotionClips = project.timeline.screenMotionClips.map {
@@ -854,6 +980,13 @@ private fun updateTiming(
             ))
         }
     }
+    if (preview) state.previewGesture(transform) else state.updateProject("移动动画片段", transform)
+}
+
+/** True when [target] is the active selection or part of a multi-select batch. */
+private fun EditorSelection.contains(target: EditorSelection): Boolean = when (this) {
+    is EditorSelection.Multi -> items.any { it == target }
+    else -> this == target
 }
 
 private fun TimelineHit.toSelection(): EditorSelection = when (this) {
@@ -954,7 +1087,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawClip(
     color: Color,
     ink: Color,
     label: String,
-    selected: Boolean,
+    selectionAlpha: Float,
 ) {
     val width = max(right - left, 3f)
     drawRoundRect(color, Offset(left, top), Size(width, bottom - top), CornerRadius(5f))
@@ -968,14 +1101,20 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawClip(
         )
         drawText(layout, topLeft = Offset(left + 5f, top + (bottom - top - layout.size.height) / 2))
     }
-    if (selected) {
+    if (selectionAlpha > 0.01f) {
+        val chrome = DogScColors.PrimaryText.copy(alpha = selectionAlpha)
         drawRoundRect(
-            DogScColors.PrimaryText,
+            chrome,
             Offset(left, top),
             Size(width, bottom - top),
             CornerRadius(5f),
             style = Stroke(1.5f),
         )
+        // Edge trim handles: small pills on both ends signal the clip can be trimmed by drag.
+        val hh = (bottom - top) * 0.5f
+        val hy = top + (bottom - top - hh) / 2f
+        drawRoundRect(chrome, Offset(left - 1.5f, hy), Size(4f, hh), CornerRadius(2f))
+        drawRoundRect(chrome, Offset(right - 2.5f, hy), Size(4f, hh), CornerRadius(2f))
     }
 }
 

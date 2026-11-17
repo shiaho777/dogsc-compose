@@ -116,7 +116,15 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    Text("已选", color = DogScColors.MintInk, style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        "已选",
+                        color = DogScColors.MintInk,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DogScColors.Mint)
+                            .padding(horizontal = 7.dp, vertical = 3.dp),
+                    )
                 }
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

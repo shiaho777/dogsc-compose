@@ -61,6 +61,16 @@ class EditorSession(
     var isDirty: Boolean = false
         private set
 
+    /**
+     * Transient gesture channel. During a drag the project updates continuously but
+     * nothing enters the undo stack; [endGesture] commits the whole drag as one entry
+     * measured against the baseline captured at [beginGesture]. This keeps a 200-event
+     * drag from flooding history and lets the UI throttle preview reloads while active.
+     */
+    var gestureBaseline: RecorderProject? = null
+        private set
+    val isGestureActive: Boolean get() = gestureBaseline != null
+
     val canUndo: Boolean get() = stack.canUndo
     val canRedo: Boolean get() = stack.canRedo
     val undoLabel: String? get() = stack.undoLabel
@@ -68,6 +78,9 @@ class EditorSession(
     val outputDuration: Double get() = TimelineEditor.outputDuration(project, sourceDuration)
 
     fun commit(label: String, transform: (RecorderProject) -> RecorderProject?): Boolean {
+        // A discrete edit while a drag is still open must not split history: settle the
+        // gesture first so the drag stays one undo entry and this edit becomes the next.
+        if (isGestureActive) endGesture("调整")
         val next = transform(project) ?: return false
         if (next == project) return false
         dev.dogsc.core.model.ProjectValidator.validate(next)
@@ -75,6 +88,47 @@ class EditorSession(
         project = next
         isDirty = true
         return true
+    }
+
+    /** Opens a transient drag; captures the baseline the eventual undo entry restores to. */
+    fun beginGesture() {
+        if (gestureBaseline == null) gestureBaseline = project
+    }
+
+    /**
+     * Updates the project mid-drag without touching the undo stack. Returns true when the
+     * value actually changed so the UI can bump its revision and request a preview frame.
+     * Invalid transforms are rejected (return false) rather than crashing the drag.
+     */
+    fun previewGesture(transform: (RecorderProject) -> RecorderProject?): Boolean {
+        if (!isGestureActive) beginGesture()
+        // The transform itself can throw: model `init` blocks require() valid ranges, and a
+        // fast drag may momentarily overshoot them. Reject the sample instead of crashing.
+        val next = runCatching { transform(project) }.getOrNull() ?: return false
+        if (next == project) return false
+        runCatching { dev.dogsc.core.model.ProjectValidator.validate(next) }.onFailure { return false }
+        project = next
+        isDirty = true
+        return true
+    }
+
+    /**
+     * Closes the drag, committing baseline->final as a single undo entry. A drag that
+     * ended where it started produces no entry. Returns true when history changed.
+     */
+    fun endGesture(label: String): Boolean {
+        val baseline = gestureBaseline ?: return false
+        gestureBaseline = null
+        if (project == baseline) return false
+        stack.commit(label, project)
+        return true
+    }
+
+    /** Abandons an in-flight drag, restoring the baseline (e.g. cancelled gesture). */
+    fun cancelGesture() {
+        val baseline = gestureBaseline ?: return
+        gestureBaseline = null
+        project = baseline
     }
 
     fun undo(): Boolean {

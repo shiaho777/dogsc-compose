@@ -192,7 +192,7 @@ class AndroidExporter(
                     return@withContext ExportResult.Failure("存储空间不足，请清理后重试")
                 }
                 Log.d("DogSCExport", "video start ${outputWidth}x${outputHeight} range=$trimStart..$trimEnd duration=$exportDuration")
-                val encoder = CanvasVideoEncoder(
+                val encoder = createVideoEncoder(
                     outputWidth,
                     outputHeight,
                     frameRate,
@@ -419,13 +419,13 @@ class AndroidExporter(
     private fun resolveEncoderSize(width: Int, height: Int): Pair<Int, Int> =
         EncoderCapabilities.clamp(width, height)
 
-private class CanvasVideoEncoder(
+internal class CanvasVideoEncoder(
     private val width: Int,
     private val height: Int,
     private val frameRate: Int,
     private val bitrate: Int,
     private val output: File,
-) {
+) : VideoEncoder {
     private val codec: MediaCodec
     private val muxer: MediaMuxer
     private var trackIndex = -1
@@ -481,7 +481,7 @@ private class CanvasVideoEncoder(
         }
     }
 
-    fun encodeFrame(bitmap: Bitmap, presentationTimeUs: Long) {
+    override fun encodeFrame(bitmap: Bitmap, presentationTimeUs: Long) {
         bitmap.getPixels(argb, 0, width, 0, 0, width, height)
         argbToYuv420()
         val inputIndex = codec.dequeueInputBuffer(10_000)
@@ -494,7 +494,7 @@ private class CanvasVideoEncoder(
         drain(false)
     }
 
-    fun finish() {
+    override fun finish() {
         val inputIndex = codec.dequeueInputBuffer(10_000)
         if (inputIndex >= 0) {
             codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
@@ -506,7 +506,7 @@ private class CanvasVideoEncoder(
         runCatching { muxer.release() }
     }
 
-    fun release() {
+    override fun release() {
         runCatching { codec.stop() }
         runCatching { codec.release() }
         if (muxerStarted) runCatching { muxer.stop() }

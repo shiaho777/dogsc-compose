@@ -439,6 +439,22 @@ data class ProjectedScreenQuad(
         )
     }
 
+    /**
+     * Inverse of [project]: maps a canvas-space point back into [sourceRect] authoring space.
+     * Used by canvas hit-testing so a tap on a tilted/3D screen card resolves to the same
+     * content coordinate the renderer drew. Returns null when the homography is degenerate.
+     */
+    fun unproject(point: CompositionPoint, sourceRect: CompositionRect): CompositionPoint? {
+        val h = homography(sourceRect) ?: return null
+        val inv = invert3x3(h) ?: return null
+        val divisor = inv[6] * point.x + inv[7] * point.y + inv[8]
+        if (kotlin.math.abs(divisor) <= 1e-9) return null
+        return CompositionPoint(
+            (inv[0] * point.x + inv[1] * point.y + inv[2]) / divisor,
+            (inv[3] * point.x + inv[4] * point.y + inv[5]) / divisor,
+        )
+    }
+
     /** Projects a point authored inside [sourceRect] through the quad homography. */
     fun project(point: CompositionPoint, sourceRect: CompositionRect): CompositionPoint? {
         if (sourceRect.width <= 0 || sourceRect.height <= 0) return null
@@ -787,6 +803,21 @@ object CameraContentFill {
             scale = scale,
         )
     }
+}
+
+/** Inverts a row-major 3×3 matrix; returns null when singular. Used by quad unprojection. */
+internal fun invert3x3(m: DoubleArray): DoubleArray? {
+    val a = m[0]; val b = m[1]; val c = m[2]
+    val d = m[3]; val e = m[4]; val f = m[5]
+    val g = m[6]; val h = m[7]; val i = m[8]
+    val det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+    if (kotlin.math.abs(det) <= 1e-12) return null
+    val invDet = 1.0 / det
+    return doubleArrayOf(
+        (e * i - f * h) * invDet, (c * h - b * i) * invDet, (b * f - c * e) * invDet,
+        (f * g - d * i) * invDet, (a * i - c * g) * invDet, (c * d - a * f) * invDet,
+        (d * h - e * g) * invDet, (b * g - a * h) * invDet, (a * e - b * d) * invDet,
+    )
 }
 
 /** Utility for hit testing the projected screen quad. */

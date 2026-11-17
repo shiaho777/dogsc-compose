@@ -106,9 +106,12 @@ class AndroidProjectRepository(private val context: Context) {
         if (isTrashed(project.id)) return@withContext false
         runCatching {
             val dir = File(projectsDir, project.id).apply { mkdirs() }
+            val target = File(dir, "project.json")
+            // Rolling previous backups (upstream ProjectStore): keep the last few manifests so a
+            // bad edit or interrupted write can be recovered. Rotate before the atomic replace.
+            rotatePreviousBackups(dir, target)
             val temp = File(dir, "project.json.tmp")
             temp.writeText(ProjectCodec.encode(project))
-            val target = File(dir, "project.json")
             // Rename is atomic on Android's filesystem; deleting the old manifest first would
             // leave a crash window with no project.json at all.
             if (!temp.renameTo(target)) {
@@ -118,6 +121,19 @@ class AndroidProjectRepository(private val context: Context) {
             ensureThumbnail(project, dir)
             true
         }.getOrDefault(false)
+    }
+
+    /** Rotates project.json -> previous/project.1.json -> .2 -> .3, dropping the oldest. */
+    private fun rotatePreviousBackups(dir: File, target: File) {
+        if (!target.exists()) return
+        runCatching {
+            val previousDir = File(dir, "previous").apply { mkdirs() }
+            val oldest = File(previousDir, "project.3.json")
+            if (oldest.exists()) oldest.delete()
+            File(previousDir, "project.2.json").renameTo(File(previousDir, "project.3.json"))
+            File(previousDir, "project.1.json").renameTo(File(previousDir, "project.2.json"))
+            target.copyTo(File(previousDir, "project.1.json"), overwrite = true)
+        }
     }
 
     suspend fun deleteProject(id: String): Boolean = withContext(Dispatchers.IO) {
