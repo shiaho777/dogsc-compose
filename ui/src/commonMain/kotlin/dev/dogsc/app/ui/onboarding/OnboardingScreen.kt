@@ -154,6 +154,14 @@ private fun FeatureRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
 
 @Composable
 private fun PermissionPage(state: DogScAppState, host: DogScHost) {
+    // Returning from system settings must refresh the grant, or the card keeps saying
+    // "前往授权" after the user already enabled the service.
+    var accessibilityEnabled by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(host.isAccessibilityServiceEnabled())
+    }
+    dev.dogsc.app.ui.OnAppForeground {
+        accessibilityEnabled = host.isAccessibilityServiceEnabled()
+    }
     Column(Modifier.fillMaxSize()) {
         Text(
             "先完成两项授权",
@@ -178,12 +186,12 @@ private fun PermissionPage(state: DogScAppState, host: DogScHost) {
         PermissionCard(
             icon = Icons.Outlined.TouchApp,
             title = "触控记录",
-            body = if (host.isAccessibilityServiceEnabled()) {
+            body = if (accessibilityEnabled) {
                 "已启用。只会记录点击与滚动位置，不读取屏幕文字。"
             } else {
                 "可选。启用后，点击和滚动会变成可编辑的光标轨迹。"
             },
-            action = if (host.isAccessibilityServiceEnabled()) "已启用" else "前往授权",
+            action = if (accessibilityEnabled) "已启用" else "前往授权",
             onClick = { host.openAccessibilitySettings() },
         )
         Spacer(Modifier.height(14.dp))

@@ -226,9 +226,9 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
                                 .fillMaxWidth()
                                 .height(
                                     when {
-                                        wide -> 250.dp
-                                        compactHeight -> 140.dp
-                                        else -> 206.dp
+                                        wide -> 292.dp
+                                        compactHeight -> 150.dp
+                                        else -> 248.dp
                                     },
                                 )
                                 .tourTarget("editor.timeline", LocalTourTargets.current),
@@ -527,8 +527,11 @@ private fun EditorTopBar(
         )
         SoftIconButton(Icons.Outlined.MoreHoriz, onClick = onMore, contentDescription = "更多")
         Spacer(Modifier.width(4.dp))
+        // Closing the export sheet used to hide all progress; long exports looked stuck.
+        // The button doubles as a live progress badge and reopens the sheet.
+        val exportProgress = state.exportProgress
         PillButton(
-            text = "导出",
+            text = if (exportProgress != null) "${(exportProgress.fraction * 100).roundToInt()}%" else "导出",
             onClick = onExport,
             icon = Icons.Outlined.Download,
             variant = PillVariant.Primary,
@@ -667,6 +670,18 @@ private fun TransportBar(
             style = MaterialTheme.typography.labelMedium,
         )
         Spacer(Modifier.weight(1f))
+        // Touch users have no Delete key: without this button a selected primary/zoom clip
+        // could only be removed with a physical keyboard.
+        if (state.selection !is EditorSelection.None) {
+            SoftIconButton(
+                Icons.Outlined.DeleteOutline,
+                onClick = { state.deleteSelection() },
+                contentDescription = "删除选中片段",
+                size = 32.dp,
+                iconSize = 16.dp,
+                tint = DogScColors.Danger,
+            )
+        }
         SoftIconButton(
             Icons.Outlined.ContentCut,
             onClick = { state.splitAtPlayhead() },

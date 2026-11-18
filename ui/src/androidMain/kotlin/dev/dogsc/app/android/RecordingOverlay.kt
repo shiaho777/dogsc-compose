@@ -67,11 +67,15 @@ internal class RecordingOverlay(
         markerView = action(Loc.tShort("标记")) { coordinator.addMarker() }
         micView = action(Loc.tShort("麦克风")) {
             val next = !coordinator.microphoneEnabled()
-            AndroidRecorderManager.instance?.setMicrophoneEnabled(next)
+            // Route to the live coordinator: after an Activity recreation the manager instance
+            // is fresh and holds no coordinator, so going through it silently did nothing.
+            coordinator.setMicrophoneEnabled(next)
+            AndroidRecorderManager.instance?.syncRecordingToggles()
         }
         cameraView = action(Loc.tShort("摄像头")) {
             val next = !coordinator.cameraEnabled()
-            AndroidRecorderManager.instance?.setCameraEnabled(next)
+            coordinator.setCameraEnabled(next)
+            AndroidRecorderManager.instance?.syncRecordingToggles()
         }
         val memoButton = action(Loc.tShort("备忘")) { toggleMemo() }
         val stop = action(Loc.tShort("停止")) {

@@ -711,16 +711,19 @@ fun Dot(color: Color, size: Dp = 7.dp) {
 
 @Composable
 fun ColorSwatch(color: Color, selected: Boolean, onClick: () -> Unit, size: Dp = 28.dp) {
-    Box(
-        Modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(color)
-            .border(
-                if (selected) 2.dp else 1.dp,
-                if (selected) DogScColors.PrimaryText else DogScColors.Hairline,
-                CircleShape,
-            )
-            .clickable(onClick = onClick),
-    )
+    // Keep the visual swatch small but give the finger a ≥32dp target around it.
+    val target = if (size < 32.dp) 32.dp else size
+    Box(Modifier.size(target).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(color)
+                .border(
+                    if (selected) 2.dp else 1.dp,
+                    if (selected) DogScColors.PrimaryText else DogScColors.Hairline,
+                    CircleShape,
+                ),
+        )
+    }
 }

@@ -119,6 +119,8 @@ interface DogScPlatform {
     suspend fun renameProject(id: String, title: String): Boolean
 
     suspend fun importVideo(uri: String): LoadedProject?
+    /** Reason of the most recent failed import, so the UI can explain instead of a generic toast. */
+    val lastImportError: String? get() = null
     suspend fun importSticker(projectId: String, uri: String): String?
     suspend fun importBackground(projectId: String, uri: String, isVideo: Boolean): String?
     suspend fun loadThumbnail(project: RecorderProject, atTime: Double): ImageBitmap?
@@ -159,6 +161,8 @@ interface DogScPlatform {
     fun pausePreviewAudio() {}
     fun releasePreviewAudio() {}
     fun refreshPreviewAudioVolume(project: RecorderProject, outputTime: Double) {}
+    /** Rebuilds preview audio slices after a timeline edit during playback (no focus re-request). */
+    fun resyncPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {}
     fun releasePreviewFrames() {}
 
     /** Clamps an export size to what the platform encoder supports (identity by default). */

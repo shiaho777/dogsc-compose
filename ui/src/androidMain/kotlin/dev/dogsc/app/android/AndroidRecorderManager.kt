@@ -117,7 +117,24 @@ class AndroidRecorderManager(
         // Notification denial only hides the progress notification; it must not block capture.
         val denied = result.filterValues { !it }.keys - Manifest.permission.POST_NOTIFICATIONS
         if (denied.isNotEmpty()) {
-            fail("需要录音或摄像头权限才能开始录制")
+            // "Don't ask again" denials never show a system dialog again; without a settings
+            // escape hatch every Start press fails with the same toast forever.
+            val permanentlyDenied = denied.any {
+                !ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
+            }
+            if (permanentlyDenied) {
+                fail("录音或摄像头权限已被拒绝，请在系统设置中开启后重试")
+                runCatching {
+                    activity.startActivity(
+                        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = android.net.Uri.fromParts("package", activity.packageName, null)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        },
+                    )
+                }
+            } else {
+                fail("需要录音或摄像头权限才能开始录制")
+            }
             return
         }
         beginProjectionRequest()
@@ -231,32 +248,55 @@ class AndroidRecorderManager(
         }, 350)
     }
 
+    /**
+     * After an Activity recreation this manager is fresh while the capture keeps running in
+     * the companion-held coordinator. Commands must reach the live session, not the empty
+     * local field, or stop/pause/toggles silently do nothing.
+     */
+    private fun liveCoordinator(): RecordingCoordinator? = coordinator ?: activeCoordinator
+
+    private fun adoptLiveSessionIfNeeded() {
+        if (coordinator == null && activeCoordinator != null && !mutableState.value.isActive) {
+            mutableState.value = mutableState.value.copy(isActive = true, isRecording = true)
+        }
+    }
+
     fun stop() {
+        adoptLiveSessionIfNeeded()
         if (!mutableState.value.isActive) return
         mutableState.value = mutableState.value.copy(isFinishing = true)
-        coordinator?.stop()
+        liveCoordinator()?.stop()
     }
 
     fun pause() {
-        coordinator?.pause()
+        liveCoordinator()?.pause()
     }
 
     fun resume() {
-        coordinator?.resume()
+        liveCoordinator()?.resume()
     }
 
     fun addMarker() {
-        coordinator?.addMarker()
+        liveCoordinator()?.addMarker()
     }
 
     fun setMicrophoneEnabled(enabled: Boolean) {
-        coordinator?.setMicrophoneEnabled(enabled)
+        liveCoordinator()?.setMicrophoneEnabled(enabled)
         mutableState.value = mutableState.value.copy(microphoneEnabled = enabled)
     }
 
     fun setCameraEnabled(enabled: Boolean) {
-        coordinator?.setCameraEnabled(enabled)
+        liveCoordinator()?.setCameraEnabled(enabled)
         mutableState.value = mutableState.value.copy(cameraEnabled = enabled)
+    }
+
+    /** Refreshes toggle state after the overlay changed the live coordinator directly. */
+    fun syncRecordingToggles() {
+        val live = liveCoordinator() ?: return
+        mutableState.value = mutableState.value.copy(
+            microphoneEnabled = live.microphoneEnabled(),
+            cameraEnabled = live.cameraEnabled(),
+        )
     }
 
     fun discard() {
@@ -377,6 +417,9 @@ internal class RecordingCoordinator(
     private var cameraVisible = true
     private var stopping = false
     @Volatile private var discarded = false
+    /** Set when a recorder error forced the session to stop early; reported after finalize. */
+    @Volatile private var pendingCaptureError: String? = null
+    private var cameraErrorReported = false
     private var rawDuration = 0.0
     private val projectTitle = Loc.t("录制") + " " +
         SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
@@ -487,6 +530,22 @@ internal class RecordingCoordinator(
         timerJob = scope.launch {
             while (true) {
                 delay(250)
+                // The recorders surface disk-full / system-stopped-capture errors on their own
+                // threads. Without polling them the timer kept counting and the UI claimed
+                // "recording" while nothing reached disk. Stop and keep the recoverable footage.
+                val captureFailure = screenRecorder?.error
+                if (captureFailure != null) {
+                    pendingCaptureError = captureFailure
+                    stop()
+                    break
+                }
+                cameraRecorder?.error?.let { failure ->
+                    // The camera track died but the screen keeps recording; tell the user once.
+                    if (!cameraErrorReported) {
+                        cameraErrorReported = true
+                        onError(failure)
+                    }
+                }
                 val elapsed = elapsedSeconds()
                 overlay?.updateTime(elapsed)
                 onState(
@@ -819,6 +878,7 @@ internal class RecordingCoordinator(
             }
             val saved = repository.saveProject(project)
             if (saved && !discarded) {
+                pendingCaptureError?.let { onError("录制已提前结束：$it，已保存可用部分") }
                 onCompleted(projectId)
             } else if (!discarded) {
                 // End the session instead of leaving the recording screen stuck with isActive.

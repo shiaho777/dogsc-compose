@@ -67,6 +67,42 @@ import dev.dogsc.app.ui.theme.DogScTheme
 fun DogScApp(host: DogScHost) {
     val scope = rememberCoroutineScope()
     val state = remember { DogScAppState(host.platform, scope) }
+    // Process death used to drop the user back to an empty library mid-edit. Persist the
+    // screen + playhead through the platform's saved-instance-state channel.
+    var savedUi by androidx.compose.runtime.saveable.rememberSaveable(
+        stateSaver = androidx.compose.runtime.saveable.listSaver<DogScAppState.UiSnapshot, Any>(
+            save = { snapshot ->
+                listOf(
+                    snapshot.screenKind,
+                    snapshot.projectId ?: "",
+                    snapshot.playhead,
+                    snapshot.timelinePixelsPerSecond,
+                    snapshot.inspectorTab,
+                    snapshot.timelineExpanded,
+                )
+            },
+            restore = { list ->
+                DogScAppState.UiSnapshot(
+                    screenKind = list[0] as String,
+                    projectId = (list[1] as String).ifBlank { null },
+                    playhead = list[2] as Double,
+                    timelinePixelsPerSecond = list[3] as Float,
+                    inspectorTab = list[4] as String,
+                    timelineExpanded = list[5] as Boolean,
+                )
+            },
+        ),
+    ) { mutableStateOf(state.captureUiSnapshot()) }
+    var uiRestored by remember { mutableStateOf(false) }
+    LaunchedEffect(state.projects, state.isLoadingProjects) {
+        if (uiRestored || state.isLoadingProjects) return@LaunchedEffect
+        uiRestored = true
+        state.restoreUiSnapshot(savedUi)
+    }
+    LaunchedEffect(state) {
+        androidx.compose.runtime.snapshotFlow { state.captureUiSnapshot() }
+            .collect { savedUi = it }
+    }
     // Collecting the full recorder state here recomposed the entire app tree on every
     // elapsed-second tick. The root only needs these three signals; RecordingScreen
     // collects the live state (including elapsedSeconds) itself.

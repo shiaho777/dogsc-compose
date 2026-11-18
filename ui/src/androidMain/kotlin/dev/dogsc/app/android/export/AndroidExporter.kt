@@ -49,6 +49,14 @@ class AndroidExporter(
     @Volatile
     private var cancelled = false
 
+    init {
+        // A process killed mid-export never reaches the finally cleanup; timestamped temp
+        // files then pile up (GBs for long recordings). Sweep leftovers from previous runs.
+        runCatching {
+            File(context.cacheDir, "DogSCExport").listFiles()?.forEach { it.delete() }
+        }
+    }
+
     fun cancel() {
         cancelled = true
     }
@@ -184,8 +192,12 @@ class AndroidExporter(
                     frameRate,
                     ExportEncodingPolicy.videoBitrate(outputWidth, outputHeight, frameRate),
                 )
-                val requiredBytes = videoBitrate
-                    .toLong() / 8L * exportDuration.toLong().coerceAtLeast(1L) + 32L * 1024 * 1024
+                // The pipeline holds tempVideo + finalFile simultaneously, then copies to the
+                // destination: budget two video copies plus audio, not one, or a tight disk
+                // fails at 94% after minutes of rendering.
+                val videoBytes = videoBitrate.toLong() / 8L * ceil(exportDuration).toLong().coerceAtLeast(1L)
+                val audioBytes = 192_000L / 8L * ceil(exportDuration).toLong().coerceAtLeast(1L)
+                val requiredBytes = videoBytes * 2 + audioBytes + 64L * 1024 * 1024
                 val freeBytes = runCatching { StatFs(context.cacheDir.path).availableBytes }
                     .getOrDefault(Long.MAX_VALUE)
                 if (freeBytes < requiredBytes) {
@@ -207,6 +219,16 @@ class AndroidExporter(
                 var lastSourceFrame: Bitmap? = null
                 var lastCameraFrame: Bitmap? = null
                 var lastRenderedBitmap: Bitmap? = null
+                val exportStartMs = android.os.SystemClock.elapsedRealtime()
+                // ETA from measured throughput: content-seconds × 0.7 ignored the real render
+                // speed and promised "7 s left" for exports that took minutes.
+                fun etaAt(index: Int): Double? {
+                    if (index <= 8) return null
+                    val elapsedMs = android.os.SystemClock.elapsedRealtime() - exportStartMs
+                    if (elapsedMs <= 0) return null
+                    val msPerFrame = elapsedMs.toDouble() / (index + 1)
+                    return ((frameCount - index - 1) * msPerFrame / 1000.0).coerceAtLeast(0.0)
+                }
 
                 try {
                     for (index in 0 until frameCount) {
@@ -224,7 +246,7 @@ class AndroidExporter(
                             encoder.encodeFrame(lastRenderedBitmap!!, (index.toDouble() / frameRate * 1_000_000).toLong())
                             if (index % 12 == 0) {
                                 val fraction = 0.03f + 0.82f * (index + 1) / frameCount
-                                onProgress(ExportProgress(fraction, "正在合成与编码 ${index + 1}/$frameCount"))
+                                onProgress(ExportProgress(fraction, "正在合成与编码 ${index + 1}/$frameCount", etaAt(index)))
                             }
                             continue
                         }
@@ -282,7 +304,7 @@ class AndroidExporter(
                                 ExportProgress(
                                     fraction,
                                     "正在合成与编码 ${index + 1}/$frameCount",
-                                    if (index > 8) (trimEnd - time) * 0.7 else null,
+                                    etaAt(index),
                                 )
                             )
                         }
@@ -354,6 +376,18 @@ class AndroidExporter(
 
     private fun absTime(a: Double, b: Double): Double = kotlin.math.abs(a - b)
 
+    /** Chunked copy that honours cancellation: a multi-GB final copy used to run to completion
+     *  after the UI already said "cancelled". Returns false when the user cancelled mid-copy. */
+    private fun copyCancellable(input: java.io.InputStream, output: java.io.OutputStream): Boolean {
+        val buffer = ByteArray(1 shl 20)
+        while (true) {
+            if (cancelled) return false
+            val read = input.read(buffer)
+            if (read < 0) return true
+            output.write(buffer, 0, read)
+        }
+    }
+
     private fun copyToDestination(source: File, outputUri: String) {
         val uri = Uri.parse(outputUri)
         if (uri.scheme == "file") {
@@ -363,15 +397,18 @@ class AndroidExporter(
             target.parentFile?.mkdirs()
             val temp = File(target.parentFile, ".${target.name}.part")
             try {
+                var complete = false
                 FileOutputStream(temp).use { out ->
-                    source.inputStream().use { input -> input.copyTo(out, 1 shl 20) }
-                    out.fd.sync()
+                    source.inputStream().use { input -> complete = copyCancellable(input, out) }
+                    if (complete) out.fd.sync()
                 }
+                if (!complete) return
                 if (!temp.renameTo(target)) {
                     FileOutputStream(target).use { out ->
-                        temp.inputStream().use { input -> input.copyTo(out, 1 shl 20) }
-                        out.fd.sync()
+                        temp.inputStream().use { input -> complete = copyCancellable(input, out) }
+                        if (complete) out.fd.sync()
                     }
+                    if (!complete) runCatching { target.delete() }
                 }
             } finally {
                 runCatching { temp.delete() }
@@ -381,7 +418,7 @@ class AndroidExporter(
             // and fsync so a completed copy is durable before we report success.
             val output = context.contentResolver.openOutputStream(uri) ?: error("无法写入导出文件")
             output.use { target ->
-                source.inputStream().use { input -> input.copyTo(target, 1 shl 20) }
+                source.inputStream().use { input -> copyCancellable(input, target) }
                 target.flush()
                 runCatching {
                     if (target is FileOutputStream) target.fd.sync()

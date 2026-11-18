@@ -76,6 +76,8 @@ class AndroidDogScPlatform(
 
     override suspend fun importVideo(uri: String): LoadedProject? = repository.importVideo(uri)
 
+    override val lastImportError: String? get() = repository.lastImportError
+
     override suspend fun importSticker(projectId: String, uri: String): String? =
         repository.importSticker(projectId, uri)
 
@@ -261,6 +263,10 @@ class AndroidDogScPlatform(
 
     override fun refreshPreviewAudioVolume(project: RecorderProject, outputTime: Double) {
         previewAudio.refreshVolume(project, outputTime)
+    }
+
+    override fun resyncPreviewAudio(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
+        previewAudio.resync(project, sourceDuration, outputTime)
     }
 
     override fun releasePreviewFrames() {
