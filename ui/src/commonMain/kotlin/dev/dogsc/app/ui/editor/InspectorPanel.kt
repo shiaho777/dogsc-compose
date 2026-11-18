@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
 import dev.dogsc.app.ui.theme.DogScMotion
 import dev.dogsc.app.ui.theme.rememberReducedMotion
@@ -759,15 +760,31 @@ private fun TextFieldRow(
     placeholder: String,
     onValueChange: (String) -> Unit,
 ) {
+    // Commit on focus loss / Done, not per keystroke: typing used to create one undo
+    // entry and one preview request per character.
     var local by remember(value) { mutableStateOf(value) }
+    val currentCommit by androidx.compose.runtime.rememberUpdatedState(onValueChange)
+    fun commit() {
+        if (local != value) currentCommit(local)
+    }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Text(label, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(74.dp))
         OutlinedTextField(
             value = local,
-            onValueChange = { local = it; onValueChange(it) },
+            onValueChange = { local = it },
             placeholder = { Text(placeholder, style = MaterialTheme.typography.bodySmall) },
             singleLine = true,
-            modifier = Modifier.weight(1f),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+            ),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                onDone = { commit() },
+            ),
+            modifier = Modifier
+                .weight(1f)
+                .onFocusChanged { focusState ->
+                    if (!focusState.isFocused) commit()
+                },
         )
     }
 }

@@ -30,7 +30,75 @@ object TimelineEditor {
         TimelineMap(project.timeline.sourceSequence, sourceDuration)
 
     fun outputDuration(project: RecorderProject, sourceDuration: Double): Double =
-        timelineMap(project, sourceDuration).outputDuration
+        TimelineMath.outputDuration(project.timeline.sourceSequence, sourceDuration)
+
+    /**
+     * Carries every output-clock effect (zoom, screen/camera motion, mosaic,
+     * stickers) across a primary-sequence change. Without this, a ripple delete /
+     * trim / reorder / retime leaves later effects on stale output times — a
+     * redaction mosaic would slide off the region it was placed over. Intervals
+     * are mapped old-output → source → new-output; content that was removed drops
+     * out, and clips that lose their whole span are deleted. Markers already live
+     * on the source clock and need no remap.
+     */
+    private fun remapEffects(
+        project: RecorderProject,
+        oldMap: TimelineMap,
+        newSequence: SourceSequence,
+        sourceDuration: Double,
+        newOverrides: Map<String, PrimarySegmentAudioOverrides> = project.timeline.primarySegmentAudioOverrides,
+    ): RecorderProject {
+        val newMap = TimelineMap(newSequence, sourceDuration)
+        val timeline = project.timeline
+        fun remap(start: Double, end: Double): Pair<Double, Double>? =
+            oldMap.remapOutputInterval(start, end, newMap)
+
+        val zooms = timeline.zoomClips.mapNotNull { clip ->
+            val (s, e) = remap(clip.startTime, clip.endTime) ?: return@mapNotNull null
+            if (abs(s - clip.startTime) < 1e-9 && abs(e - clip.endTime) < 1e-9) clip
+            else clip.copy(startTime = s, endTime = e)
+        }
+        fun remapTransition(timing: TransitionTiming): TransitionTiming? {
+            val (s, e) = remap(timing.startTime, timing.endTime) ?: return null
+            val duration = e - s
+            return timing.copy(
+                startTime = s,
+                duration = duration,
+                leadInDuration = min(timing.leadInDuration, duration),
+            )
+        }
+        val screenMotions = timeline.screenMotionClips.mapNotNull { clip ->
+            val timing = remapTransition(clip.timing) ?: return@mapNotNull null
+            if (timing == clip.timing) clip else clip.copy(timing = timing)
+        }
+        val cameraMotions = timeline.cameraMotionClips.mapNotNull { clip ->
+            val timing = remapTransition(clip.timing) ?: return@mapNotNull null
+            if (timing == clip.timing) clip else clip.copy(timing = timing)
+        }
+        fun remapOverlay(timing: OverlayTiming): OverlayTiming? {
+            val (s, e) = remap(timing.startTime, timing.endTime) ?: return null
+            return OverlayTiming(startTime = s, duration = e - s)
+        }
+        val mosaics = timeline.mosaicClips.mapNotNull { clip ->
+            val timing = remapOverlay(clip.timing) ?: return@mapNotNull null
+            if (timing == clip.timing) clip else clip.copy(timing = timing)
+        }
+        val stickers = timeline.stickerClips.mapNotNull { clip ->
+            val timing = remapOverlay(clip.timing) ?: return@mapNotNull null
+            if (timing == clip.timing) clip else clip.copy(timing = timing)
+        }
+        return project.copy(
+            timeline = timeline.copy(
+                sourceSequence = newSequence,
+                primarySegmentAudioOverrides = newOverrides,
+                zoomClips = zooms,
+                screenMotionClips = screenMotions,
+                cameraMotionClips = cameraMotions,
+                mosaicClips = mosaics,
+                stickerClips = stickers,
+            ),
+        )
+    }
 
     fun materializeEdited(project: RecorderProject, sourceDuration: Double): RecorderProject {
         if (project.timeline.sourceSequence is SourceSequence.Edited) return project
@@ -85,6 +153,7 @@ object TimelineEditor {
     ): RecorderProject? {
         if (end - start < 0.02) return null
         val map = timelineMap(project, sourceDuration)
+        val overrides = project.timeline.primarySegmentAudioOverrides.toMutableMap()
         val segments = map.segments.flatMap { segment ->
             val removeStart = max(start, segment.outputStart)
             val removeEnd = min(end, segment.outputEnd)
@@ -98,7 +167,9 @@ object TimelineEditor {
             }
             val kept = mutableListOf<RecordingSegment>()
             val leadingOutput = removeStart - segment.outputStart
-            if (leadingOutput > 0.01) {
+            // Keep any non-degenerate sliver instead of silently widening the cut by
+            // up to 20 ms; only float-noise-sized pieces are dropped.
+            if (leadingOutput > 1e-6) {
                 kept += RecordingSegment(
                     id = segment.id,
                     sourceStart = segment.sourceStart,
@@ -107,24 +178,26 @@ object TimelineEditor {
                 )
             }
             val trailingOutput = segment.outputEnd - removeEnd
-            if (trailingOutput > 0.01) {
-                kept += RecordingSegment(
+            if (trailingOutput > 1e-6) {
+                val trailing = RecordingSegment(
                     sourceStart = segment.sourceEnd - trailingOutput * segment.playbackRate,
                     sourceDuration = trailingOutput * segment.playbackRate,
                     playbackRate = segment.playbackRate,
                 )
+                // The tail keeps the segment's authored mute/volume, exactly like
+                // splitPrimary does for its right half.
+                overrides[segment.id]?.let { overrides[trailing.id] = it }
+                kept += trailing
             }
             kept
         }
         if (segments.isEmpty()) return null
         // Array order is output order. Sorting by sourceStart here silently undid any
         // intentional segment rearrangement before the delete.
-        return project.copy(
-            timeline = project.timeline.copy(
-                sourceSequence = SourceSequence.Edited(segments),
-                primarySegmentAudioOverrides = project.timeline.primarySegmentAudioOverrides
-                    .filterKeys { id -> segments.any { it.id == id } },
-            ),
+        val survivingIds = segments.map { it.id }.toSet()
+        return remapEffects(
+            project, map, SourceSequence.Edited(segments), sourceDuration,
+            newOverrides = overrides.filterKeys { it in survivingIds },
         )
     }
 
@@ -187,7 +260,7 @@ object TimelineEditor {
         val destination = targetIndex.coerceIn(0, segments.size)
         if (destination == fromIndex) return null
         segments.add(destination, segment)
-        return project.copy(timeline = project.timeline.copy(sourceSequence = SourceSequence.Edited(segments)))
+        return remapEffects(project, map, SourceSequence.Edited(segments), sourceDuration)
     }
 
     fun setPlaybackRate(
@@ -216,9 +289,16 @@ object TimelineEditor {
         val next = map.segments.getOrNull(index + 1)
         val gapBefore = previous?.let { current.sourceStart - it.sourceEnd } ?: 0.0
         val gapAfter = next?.let { it.sourceStart - current.sourceEnd } ?: 0.0
-        val candidates = listOf(gapBefore to "before", gapAfter to "after").filter { it.first > 0.001 }
+        // Restore the cut nearest the playhead, not the largest gap: at a boundary
+        // between a pause-gap and an intentional delete-gap, "largest" could resurrect
+        // the wrong side. Distance is measured on the output clock; ties prefer the
+        // cut the playhead just crossed.
+        val candidates = mutableListOf<Pair<Double, String>>()
+        if (gapBefore > 0.001) candidates += abs(outputTime - current.outputStart) to "before"
+        if (gapAfter > 0.001) candidates += abs(current.outputEnd - outputTime) to "after"
         if (candidates.isEmpty()) return null
-        val (gap, side) = candidates.maxBy { it.first }
+        val side = candidates.minBy { it.first }.second
+        val gap = if (side == "before") gapBefore else gapAfter
         val segments = map.segments.map {
             RecordingSegment(
                 id = it.id,
@@ -255,17 +335,21 @@ object TimelineEditor {
                 coalesced += segment
             }
         }
-        return project.copy(timeline = project.timeline.copy(sourceSequence = SourceSequence.Edited(coalesced)))
+        // Coalescing can retire segment ids; drop their orphaned audio overrides.
+        val survivingIds = coalesced.map { it.id }.toSet()
+        return remapEffects(
+            project, map, SourceSequence.Edited(coalesced), sourceDuration,
+            newOverrides = project.timeline.primarySegmentAudioOverrides.filterKeys { it in survivingIds },
+        )
     }
 
     fun restoreAllCuts(project: RecorderProject, sourceDuration: Double): RecorderProject {
-        return project.copy(
-            timeline = project.timeline.copy(
-                sourceSequence = SourceSequence.Edited(
-                    listOf(RecordingSegment(sourceStart = 0.0, sourceDuration = sourceDuration))
-                ),
-                primarySegmentAudioOverrides = emptyMap(),
-            ),
+        val map = timelineMap(project, sourceDuration)
+        return remapEffects(
+            project, map,
+            SourceSequence.Edited(listOf(RecordingSegment(sourceStart = 0.0, sourceDuration = sourceDuration))),
+            sourceDuration,
+            newOverrides = emptyMap(),
         )
     }
 
@@ -294,7 +378,7 @@ object TimelineEditor {
                 )
             }
         }
-        return project.copy(timeline = project.timeline.copy(sourceSequence = SourceSequence.Edited(segments)))
+        return remapEffects(project, map, SourceSequence.Edited(segments), map.fullSourceDuration)
     }
 
     // ---- Overlay / motion clip operations ---------------------------------

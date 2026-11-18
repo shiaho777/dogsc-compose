@@ -103,20 +103,98 @@ class VideoFrameSource(file: File) {
         height = max(displayHeight, 2)
         frameRate = if (detectedFrameRate > 0.5) detectedFrameRate else 30.0
         argb = IntArray(width * height)
-        if (rotation != 0) {
-            // The emulator/device decoder output for a display-matrix video is not reliably
-            // oriented (observed a 180° coded output for a 270° matrix). MediaMetadataRetriever
-            // returns frames already oriented, so rotated sources use that path.
-            if (extractor != null) {
-                runCatching { codec?.stop() }
-                runCatching { codec?.release() }
-                runCatching { reader?.close() }
-                runCatching { extractor?.release() }
-            }
-            extractor = null
-            codec = null
-            reader = null
+        // Rotated sources keep the sequential decoder. The old path fell back to
+        // MediaMetadataRetriever.getFrameAtTime per frame (50-110 ms each), which made
+        // any camera-PiP export several times slower than realtime. Instead we probe
+        // the decoder's actual output orientation once against a retriever reference
+        // frame and apply the measured residual rotation to every decoded frame.
+    }
+
+    /** Residual rotation (degrees CW) to apply to decoded frames; null until probed. */
+    private var residualRotation: Int? = null
+    private var rotationProbeDone = false
+    private var rotatedReused: Bitmap? = null
+
+    /**
+     * Some decoders already apply the display matrix, others return coded orientation
+     * (a 180°-coded frame was observed for a 270° matrix). Compare one decoded frame
+     * against the retriever's display-oriented reference at the same timestamp and
+     * pick the rotation whose downscaled pixels match best.
+     */
+    private fun probeRotation(decoded: Bitmap, atTime: Double) {
+        rotationProbeDone = true
+        val normalized = ((rotationDegrees % 360) + 360) % 360
+        if (normalized == 0) {
+            residualRotation = 0
+            return
         }
+        val reference = runCatching { fallback.frameAt(atTime) }.getOrNull()
+        if (reference == null) {
+            // No reference available: assume the decoder outputs coded orientation.
+            residualRotation = normalized
+            return
+        }
+        val candidates = listOf(0, 90, 180, 270)
+        var best = normalized
+        var bestScore = Long.MAX_VALUE
+        for (candidate in candidates) {
+            val rotated = rotateBitmap(decoded, candidate)
+            val score = downscaleDiff(rotated, reference)
+            if (rotated !== decoded) rotated.recycle()
+            if (score < bestScore) {
+                bestScore = score
+                best = candidate
+            }
+        }
+        residualRotation = best
+        Log.d("DogSCExport", "rotation probe: matrix=$normalized residual=$best score=$bestScore")
+    }
+
+    private fun rotateBitmap(source: Bitmap, degrees: Int): Bitmap {
+        if (degrees % 360 == 0) return source
+        val matrix = android.graphics.Matrix().apply { postRotate(degrees.toFloat()) }
+        return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+    }
+
+    /** Mean absolute pixel difference on a tiny thumbnail; orientation-agnostic to scale. */
+    private fun downscaleDiff(a: Bitmap, b: Bitmap): Long {
+        val side = 24
+        val sa = Bitmap.createScaledBitmap(a, side, side, true)
+        val sb = Bitmap.createScaledBitmap(b, side, side, true)
+        val pa = IntArray(side * side)
+        val pb = IntArray(side * side)
+        sa.getPixels(pa, 0, side, 0, 0, side, side)
+        sb.getPixels(pb, 0, side, 0, 0, side, side)
+        if (sa !== a) sa.recycle()
+        if (sb !== b) sb.recycle()
+        var total = 0L
+        for (i in pa.indices) {
+            val ca = pa[i]
+            val cb = pb[i]
+            total += abs(((ca shr 16) and 0xFF) - ((cb shr 16) and 0xFF)).toLong()
+            total += abs(((ca shr 8) and 0xFF) - ((cb shr 8) and 0xFF)).toLong()
+            total += abs((ca and 0xFF) - (cb and 0xFF)).toLong()
+        }
+        return total
+    }
+
+    private fun orientFrame(decoded: Bitmap, atTime: Double): Bitmap {
+        if (!rotationProbeDone) probeRotation(decoded, atTime)
+        val residual = residualRotation ?: 0
+        if (residual % 360 == 0) return decoded
+        val matrix = android.graphics.Matrix().apply { postRotate(residual.toFloat()) }
+        val rotated = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+        // Reuse one oriented bitmap per size to avoid per-frame allocation churn.
+        val target = rotatedReused
+        if (target != null && !target.isRecycled && target.width == rotated.width && target.height == rotated.height) {
+            val canvas = android.graphics.Canvas(target)
+            canvas.drawBitmap(rotated, 0f, 0f, null)
+            rotated.recycle()
+            return target
+        }
+        rotatedReused?.takeIf { !it.isRecycled }?.recycle()
+        rotatedReused = rotated
+        return rotated
     }
 
     /** Timestamp of the frame most recently returned by [frameAt], in seconds. */
@@ -163,13 +241,14 @@ class VideoFrameSource(file: File) {
                     codec.releaseOutputBuffer(outputIndex, true)
                     val image = runCatching { reader.acquireNextImage() }.getOrNull()
                     if (image != null) {
-                        val bitmap = imageToBitmap(image)
+                        val decoded = imageToBitmap(image)
                         val imageTime = if (info.presentationTimeUs > 0) {
                             info.presentationTimeUs / 1_000_000.0
                         } else {
                             image.timestamp / 1_000_000_000.0
                         }
                         image.close()
+                        val bitmap = orientFrame(decoded, imageTime)
                         lastFrame = bitmap
                         lastTime = imageTime
                         if (imageTime >= time - 0.001 || eos) return bitmap
@@ -244,6 +323,8 @@ class VideoFrameSource(file: File) {
     fun close() {
         reused?.recycle()
         reused = null
+        rotatedReused?.takeIf { !it.isRecycled }?.recycle()
+        rotatedReused = null
         runCatching { codec?.stop() }
         runCatching { codec?.release() }
         runCatching { reader?.close() }

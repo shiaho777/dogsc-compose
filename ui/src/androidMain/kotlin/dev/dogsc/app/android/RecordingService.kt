@@ -34,17 +34,35 @@ class RecordingService : Service() {
                 // stopped encoders and saved the project. The manager sends a
                 // second ACTION_STOP after finalization to actually stop us.
                 val manager = AndroidRecorderManager.instance
-                if (manager?.state?.value?.isActive == true) {
-                    manager.stop()
-                } else {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                    return START_NOT_STICKY
+                val liveCoordinator = AndroidRecorderManager.activeCoordinator
+                when {
+                    manager?.state?.value?.isActive == true -> manager.stop()
+                    // Activity recreation replaces the manager with an empty one while
+                    // the old coordinator keeps recording; route to it instead of
+                    // stopSelf()-ing the FGS under a live capture.
+                    liveCoordinator != null -> liveCoordinator.stop()
+                    else -> {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                        return START_NOT_STICKY
+                    }
                 }
             }
-            ACTION_PAUSE -> AndroidRecorderManager.instance?.pause()
-            ACTION_RESUME -> AndroidRecorderManager.instance?.resume()
-            ACTION_MARKER -> AndroidRecorderManager.instance?.addMarker()
+            ACTION_PAUSE -> {
+                val manager = AndroidRecorderManager.instance
+                if (manager?.state?.value?.isActive == true) manager.pause()
+                else AndroidRecorderManager.activeCoordinator?.pause()
+            }
+            ACTION_RESUME -> {
+                val manager = AndroidRecorderManager.instance
+                if (manager?.state?.value?.isActive == true) manager.resume()
+                else AndroidRecorderManager.activeCoordinator?.resume()
+            }
+            ACTION_MARKER -> {
+                val manager = AndroidRecorderManager.instance
+                if (manager?.state?.value?.isActive == true) manager.addMarker()
+                else AndroidRecorderManager.activeCoordinator?.addMarker()
+            }
             else -> Unit
         }
         val notification = buildNotification(0.0, false, 0)

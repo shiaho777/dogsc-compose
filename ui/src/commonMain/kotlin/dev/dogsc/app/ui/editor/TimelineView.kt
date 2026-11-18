@@ -254,21 +254,25 @@ fun TimelinePanel(
             val density = LocalDensity.current
             val contentWidth = maxOf(viewportWidth, (state.outputDuration * state.timelinePixelsPerSecond).dp)
             // Keep the playhead visible while playing without moving a user-parked timeline
-            // when playback is paused.
-            LaunchedEffect(state.isPlaying, state.playhead, state.timelinePixelsPerSecond) {
+            // when playback is paused. snapshotFlow observes the playhead without reading it
+            // in composition: keying a LaunchedEffect on state.playhead recomposed the whole
+            // panel and cancelled/relaunched the effect on every 16 ms playback tick.
+            LaunchedEffect(state.isPlaying, state.timelinePixelsPerSecond, viewportWidth) {
                 if (!state.isPlaying) return@LaunchedEffect
-                val playheadPx = with(density) {
-                    (state.playhead * state.timelinePixelsPerSecond).dp.toPx()
-                }
-                val viewportPx = with(density) { viewportWidth.toPx() }
-                val margin = viewportPx * 0.15f
-                val target = when {
-                    playheadPx < scroll.value + margin -> playheadPx - margin
-                    playheadPx > scroll.value + viewportPx - margin -> playheadPx - viewportPx + margin
-                    else -> null
-                }
-                if (target != null) {
-                    scroll.scrollTo(target.roundToInt().coerceIn(0, scroll.maxValue))
+                androidx.compose.runtime.snapshotFlow { state.playhead }.collect { playhead ->
+                    val playheadPx = with(density) {
+                        (playhead * state.timelinePixelsPerSecond).dp.toPx()
+                    }
+                    val viewportPx = with(density) { viewportWidth.toPx() }
+                    val margin = viewportPx * 0.15f
+                    val target = when {
+                        playheadPx < scroll.value + margin -> playheadPx - margin
+                        playheadPx > scroll.value + viewportPx - margin -> playheadPx - viewportPx + margin
+                        else -> null
+                    }
+                    if (target != null) {
+                        scroll.scrollTo(target.roundToInt().coerceIn(0, scroll.maxValue))
+                    }
                 }
             }
             LaunchedEffect(state.outputDuration) {
@@ -418,6 +422,25 @@ private fun TimelineCanvas(
     modifier: Modifier = Modifier,
 ) {
     val project = state.project ?: return
+    // Hoisted out of DrawScope: the filmstrip loop used to rebuild the full TimelineMap
+    // per tile per redraw, and the ruler re-measured every tick label on each frame.
+    val timelineMap = remember(project, state.sourceDuration) {
+        TimelineEditor.timelineMap(project, state.sourceDuration)
+    }
+    val rulerDuration = state.outputDuration
+    val rulerLabels = remember(rulerDuration) {
+        val labels = HashMap<Int, androidx.compose.ui.text.TextLayoutResult>()
+        var second = 0
+        while (second <= rulerDuration.toInt() + 1) {
+            labels[second] = textMeasurer.measure(
+                formatTimecode(second.toDouble(), showHundredths = false),
+                style = TextStyle(color = DogScColors.TertiaryText, fontSize = 8.sp),
+                maxLines = 1,
+            )
+            second += 1
+        }
+        labels
+    }
     var dragHit by remember { mutableStateOf<TimelineHit?>(null) }
     // onDragStart reports the position after touch slop, which can sit outside a clip edge;
     // hit-testing uses the original press so edge trims stay reachable.
@@ -710,12 +733,9 @@ private fun TimelineCanvas(
                 1f,
             )
             if (major) {
-                val layout = textMeasurer.measure(
-                    formatTimecode(second.toDouble(), showHundredths = false),
-                    style = TextStyle(color = DogScColors.TertiaryText, fontSize = 8.sp),
-                    maxLines = 1,
-                )
-                drawText(layout, topLeft = Offset(x.toFloat() + 3f, 2f))
+                rulerLabels[second]?.let { layout ->
+                    drawText(layout, topLeft = Offset(x.toFloat() + 3f, 2f))
+                }
             }
             second += 1
         }
@@ -752,8 +772,7 @@ private fun TimelineCanvas(
                     while (x < right) {
                         val tileWidth = (bottom - top) * 16f / 9f
                         val tileTime = segmentStart + ((x - left) / max(right - left, 1f)) * (segmentEnd - segmentStart)
-                        val sourceTime = TimelineEditor.timelineMap(project, state.sourceDuration)
-                            .sourceTimeAtOutput(tileTime) ?: tileTime
+                        val sourceTime = timelineMap.sourceTimeAtOutput(tileTime) ?: tileTime
                         val sourceFraction = (sourceTime / max(state.sourceDuration, 0.01)).coerceIn(0.0, 0.999)
                         val image = if (filmstrip.isNotEmpty()) {
                             filmstrip[(sourceFraction * filmstrip.size).toInt().coerceIn(0, filmstrip.lastIndex)]
@@ -895,8 +914,7 @@ private fun TimelineCanvas(
 
         // Markers.
         for (marker in project.recordingMarkers) {
-            val time = TimelineEditor.timelineMap(project, state.sourceDuration)
-                .outputTimeForSource(marker.sourceTime) ?: continue
+            val time = timelineMap.outputTimeForSource(marker.sourceTime) ?: continue
             val x = (time * pps).toFloat()
             drawLine(DogScColors.Recording, Offset(x, RulerHeight.toPx() * 0.15f), Offset(x, height), 1.2f)
             drawCircle(DogScColors.Recording, 3.2f, Offset(x, RulerHeight.toPx() * 0.25f))
@@ -908,18 +926,18 @@ private fun TimelineCanvas(
 @Composable
 private fun PlayheadOverlay(state: DogScAppState, modifier: Modifier = Modifier) {
     val textMeasurer = rememberTextMeasurer()
+    val handle = remember { Path() }
     Canvas(modifier) {
         val duration = max(state.outputDuration, 0.001)
         val playheadX = (state.playhead / duration * size.width).toFloat()
         drawLine(DogScColors.Playhead, Offset(playheadX, 0f), Offset(playheadX, size.height), 1.6f)
-        val handle = Path().apply {
-            moveTo(playheadX - 5f, 0f)
-            lineTo(playheadX + 5f, 0f)
-            lineTo(playheadX + 5f, 9f)
-            lineTo(playheadX, 14f)
-            lineTo(playheadX - 5f, 9f)
-            close()
-        }
+        handle.reset()
+        handle.moveTo(playheadX - 5f, 0f)
+        handle.lineTo(playheadX + 5f, 0f)
+        handle.lineTo(playheadX + 5f, 9f)
+        handle.lineTo(playheadX, 14f)
+        handle.lineTo(playheadX - 5f, 9f)
+        handle.close()
         drawPath(handle, DogScColors.Playhead)
         // Live time badge while scrubbing so the finger doesn't hide the readout.
         if (state.isScrubbing) {

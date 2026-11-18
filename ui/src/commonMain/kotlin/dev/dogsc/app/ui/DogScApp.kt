@@ -57,6 +57,9 @@ import dev.dogsc.app.ui.onboarding.OnboardingScreen
 import dev.dogsc.app.ui.record.RecordSetupScreen
 import dev.dogsc.app.ui.record.RecordingScreen
 import dev.dogsc.app.ui.settings.SettingsScreen
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import dev.dogsc.app.ui.theme.DogScColors
 import dev.dogsc.app.ui.theme.DogScTheme
 
@@ -64,7 +67,22 @@ import dev.dogsc.app.ui.theme.DogScTheme
 fun DogScApp(host: DogScHost) {
     val scope = rememberCoroutineScope()
     val state = remember { DogScAppState(host.platform, scope) }
-    val recorder by host.recorderState.collectAsState()
+    // Collecting the full recorder state here recomposed the entire app tree on every
+    // elapsed-second tick. The root only needs these three signals; RecordingScreen
+    // collects the live state (including elapsedSeconds) itself.
+    var recorderActive by remember { mutableStateOf(false) }
+    var recorderError by remember { mutableStateOf<String?>(null) }
+    var recorderCompletedId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(host) {
+        androidx.compose.runtime.snapshotFlow {
+            val value = host.recorderState.value
+            Triple(value.isActive, value.error, value.completedProjectId)
+        }.collect { (active, error, completed) ->
+            recorderActive = active
+            recorderError = error
+            recorderCompletedId = completed
+        }
+    }
     var handledRecordingResult by remember { mutableStateOf<String?>(null) }
     val tourTargets = remember { TourTargets() }
     var tourKind by remember { mutableStateOf<String?>(null) }
@@ -75,9 +93,9 @@ fun DogScApp(host: DogScHost) {
         state.refreshPreferences()
     }
 
-    LaunchedEffect(recorder.isActive) {
-        host.keepScreenOn(recorder.isActive)
-        if (recorder.isActive) {
+    LaunchedEffect(recorderActive) {
+        host.keepScreenOn(recorderActive)
+        if (recorderActive) {
             state.enterRecording()
         } else {
             state.leaveRecording()
@@ -105,11 +123,11 @@ fun DogScApp(host: DogScHost) {
         state.consumeTourRequest()
     }
 
-    LaunchedEffect(recorder.error) {
-        recorder.error?.let { state.showToast(it, isError = true) }
+    LaunchedEffect(recorderError) {
+        recorderError?.let { state.showToast(it, isError = true) }
     }
-    LaunchedEffect(recorder.completedProjectId) {
-        val id = recorder.completedProjectId ?: return@LaunchedEffect
+    LaunchedEffect(recorderCompletedId) {
+        val id = recorderCompletedId ?: return@LaunchedEffect
         if (handledRecordingResult == id) return@LaunchedEffect
         handledRecordingResult = id
         val loaded = runCatching { host.platform.loadProject(id) }.getOrNull()
@@ -136,9 +154,20 @@ fun DogScApp(host: DogScHost) {
         dev.dogsc.app.platform.AppAppearance.DARK -> true
         dev.dogsc.app.platform.AppAppearance.SYSTEM -> systemDark
     }
+    // Shared sliders route drags through the editor session's gesture channel when
+    // this sink is present: continuous preview, one undo entry per drag.
+    val sliderSink = remember(state) {
+        object : dev.dogsc.app.ui.components.SliderGestureSink {
+            override fun preview(apply: () -> Unit) = state.previewSliderSample("调整参数", apply)
+            override fun end(label: String) = state.endGesture(label)
+        }
+    }
     DogScTheme(darkTheme = darkTheme) {
         Box(Modifier.fillMaxSize().background(DogScColors.Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
-            CompositionLocalProvider(LocalTourTargets provides tourTargets) {
+            CompositionLocalProvider(
+                LocalTourTargets provides tourTargets,
+                dev.dogsc.app.ui.components.LocalSliderGestureSink provides sliderSink,
+            ) {
                 if (state.showOnboarding) {
                     OnboardingScreen(state = state, host = host)
                 } else {
@@ -198,7 +227,12 @@ fun DogScApp(host: DogScHost) {
                         modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (toast.isError) DogScColors.Danger else Color(0xFF23252B))
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                            // Errors (save/export failures) were silent for TalkBack users.
+                            .semantics {
+                                liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Assertive
+                                contentDescription = toast.text
+                            },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (toast.isError) {

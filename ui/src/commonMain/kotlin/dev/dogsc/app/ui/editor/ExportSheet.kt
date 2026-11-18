@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Icon
@@ -301,6 +302,22 @@ fun ExportSheet(state: DogScAppState, host: DogScHost, onDismiss: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 PillButton("重新导出", onClick = { state.clearExportResult() }, variant = PillVariant.Ghost, compact = true)
             } else {
+                // Failure used to surface only as a 2.6 s toast while the sheet silently
+                // reverted to its initial buttons; keep the reason and a retry path visible.
+                if (lastExport is ExportResult.Failure) {
+                    val failure = lastExport as ExportResult.Failure
+                    SoftCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = DogScColors.Danger.copy(alpha = 0.16f)) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.ErrorOutline, null, tint = DogScColors.Danger)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("导出失败", color = DogScColors.PrimaryText, style = MaterialTheme.typography.labelMedium)
+                                Text(failure.message, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     PillButton(
                         "选择保存位置",

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -74,7 +75,7 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -177,9 +178,15 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
             .background(DogScColors.Background)
             .focusRequester(keyFocus)
             .focusable()
-            .onPreviewKeyEvent { event -> handleEditorKey(state, event) },
+            // Bubble phase, not preview: a focused TextField must consume typing first.
+            // onPreviewKeyEvent ran before children, so typing "s" in an inspector field
+            // split the clip and Backspace deleted the selection.
+            .onKeyEvent { event -> handleEditorKey(state, event) },
     ) {
         val wide = isWideLayout(maxWidth.value)
+        // Landscape phones: the fixed bars + timeline + inspector otherwise collapse
+        // the preview to near-zero height. Compact the chrome and keep a preview floor.
+        val compactHeight = maxHeight < 480.dp
         Column(Modifier.fillMaxSize()) {
             EditorTopBar(
                 state = state,
@@ -193,14 +200,16 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     PreviewStage(
                         state = state,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = if (compactHeight) 120.dp else 0.dp),
                     )
                     TransportBar(
                         state = state,
                         onInspector = { showInspectorSheet = true },
                         wide = wide,
                     )
-                    if (!wide) {
+                    if (!wide && !compactHeight) {
                         InspectorTabStrip(
                             selected = state.inspectorTab,
                             onSelect = {
@@ -215,7 +224,13 @@ fun EditorScreen(state: DogScAppState, host: DogScHost) {
                             host = host,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(if (wide) 250.dp else 206.dp)
+                                .height(
+                                    when {
+                                        wide -> 250.dp
+                                        compactHeight -> 140.dp
+                                        else -> 206.dp
+                                    },
+                                )
                                 .tourTarget("editor.timeline", LocalTourTargets.current),
                         )
                     }

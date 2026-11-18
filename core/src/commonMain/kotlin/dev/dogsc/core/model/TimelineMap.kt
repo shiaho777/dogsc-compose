@@ -79,15 +79,24 @@ class TimelineMap(
             )
             outputStart += resolvedDuration / segment.playbackRate
         }
-        for (current in authored) {
-            val previous = authored
-                .filter { it.id != current.id && it.sourceStart <= current.sourceStart }
-                .maxWithOrNull(compareBy({ it.sourceStart }, { it.id }))
-            if (previous != null && current.sourceStart < previous.sourceEnd - epsilon) {
+        // Overlap check: sort once by source start, then verify each segment starts
+        // after its predecessor ends. O(n log n) instead of the previous O(n²) scan;
+        // ties on sourceStart are still rejected because the predecessor's end is
+        // strictly greater than the shared start.
+        val bySource = authored.sortedWith(compareBy({ it.sourceStart }, { it.id }))
+        for (index in 1 until bySource.size) {
+            val previous = bySource[index - 1]
+            val current = bySource[index]
+            if (current.sourceStart < previous.sourceEnd - epsilon) {
                 throw IllegalArgumentException("主片段不能重复使用同一段源素材。")
             }
         }
         segments = resolved
+    }
+
+    /** Segments ordered by source start; used for binary-searched source lookups. */
+    private val bySourceStart: List<ResolvedRecordingSegment> by lazy {
+        segments.sortedBy { it.sourceStart }
     }
 
     val outputDuration: Double get() = segments.lastOrNull()?.outputEnd ?: 0.0
@@ -111,8 +120,89 @@ class TimelineMap(
 
     fun outputTimeForSource(time: Double): Double? {
         if (!time.isFinite()) return null
-        val segment = segments.firstOrNull { time >= it.sourceStart && time < it.sourceEnd } ?: return null
+        val ordered = bySourceStart
+        var lower = 0
+        var upper = ordered.size
+        while (lower < upper) {
+            val middle = (lower + upper) / 2
+            if (ordered[middle].sourceEnd <= time) lower = middle + 1 else upper = middle
+        }
+        val segment = ordered.getOrNull(lower)?.takeIf { time >= it.sourceStart } ?: return null
         return segment.outputStart + (time - segment.sourceStart) / segment.playbackRate
+    }
+
+    /**
+     * Remaps an output-clock interval through a changed source sequence.
+     *
+     * Effect clips (zoom, motion, mosaic, stickers) live on the output clock, so a
+     * ripple delete / trim / reorder / retime must carry them along or they drift
+     * onto the wrong content — a redaction mosaic sliding off its sensitive region.
+     * The interval is mapped back to source time on [this] map, split at cut
+     * boundaries, and each surviving piece is re-projected through [target].
+     * Pieces whose source range was removed are dropped; a piece that spans a cut
+     * is compressed (the cut content no longer exists). Returns null when nothing
+     * survives or the result would be degenerate.
+     */
+    fun remapOutputInterval(start: Double, end: Double, target: TimelineMap): Pair<Double, Double>? {
+        if (!start.isFinite() || !end.isFinite() || end - start < 1e-9) return null
+        val clampedStart = start.coerceIn(0.0, outputDuration)
+        val clampedEnd = end.coerceIn(clampedStart, outputDuration)
+        if (clampedEnd - clampedStart < 1e-9) return null
+        var newStart = Double.POSITIVE_INFINITY
+        var newEnd = Double.NEGATIVE_INFINITY
+        // Walk this map's segments intersecting [clampedStart, clampedEnd).
+        for (segment in segments) {
+            if (segment.outputEnd <= clampedStart) continue
+            if (segment.outputStart >= clampedEnd) break
+            val pieceOutputStart = max(clampedStart, segment.outputStart)
+            val pieceOutputEnd = min(clampedEnd, segment.outputEnd)
+            val sourceA = segment.sourceStart + (pieceOutputStart - segment.outputStart) * segment.playbackRate
+            val sourceB = segment.sourceStart + (pieceOutputEnd - segment.outputStart) * segment.playbackRate
+            // The source piece may itself cross cuts in the target map; split there.
+            var cursor = sourceA
+            while (cursor < sourceB - 1e-9) {
+                val owner = target.segmentContainingSource(cursor)
+                if (owner == null) {
+                    // Removed region: jump to the next retained source range.
+                    val next = target.nextSegmentAfterSource(cursor) ?: break
+                    cursor = next.sourceStart
+                    continue
+                }
+                val pieceSourceEnd = min(sourceB, owner.sourceEnd)
+                val mappedA = owner.outputStart + (cursor - owner.sourceStart) / owner.playbackRate
+                val mappedB = owner.outputStart + (pieceSourceEnd - owner.sourceStart) / owner.playbackRate
+                newStart = min(newStart, mappedA)
+                newEnd = max(newEnd, mappedB)
+                cursor = pieceSourceEnd
+            }
+        }
+        if (newStart > newEnd || !newStart.isFinite() || !newEnd.isFinite()) return null
+        if (newEnd - newStart < 1e-6) return null
+        return newStart to newEnd
+    }
+
+    /** Segment owning a source instant (half-open [sourceStart, sourceEnd)), binary-searched. */
+    private fun segmentContainingSource(time: Double): ResolvedRecordingSegment? {
+        val ordered = bySourceStart
+        var lower = 0
+        var upper = ordered.size
+        while (lower < upper) {
+            val middle = (lower + upper) / 2
+            if (ordered[middle].sourceEnd <= time) lower = middle + 1 else upper = middle
+        }
+        return ordered.getOrNull(lower)?.takeIf { time >= it.sourceStart }
+    }
+
+    /** First segment starting strictly after a removed source instant. */
+    private fun nextSegmentAfterSource(time: Double): ResolvedRecordingSegment? {
+        val ordered = bySourceStart
+        var lower = 0
+        var upper = ordered.size
+        while (lower < upper) {
+            val middle = (lower + upper) / 2
+            if (ordered[middle].sourceStart <= time) lower = middle + 1 else upper = middle
+        }
+        return ordered.getOrNull(lower)
     }
 
     fun materializedSourceSequence(): SourceSequence = SourceSequence.Edited(

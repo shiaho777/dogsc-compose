@@ -53,6 +53,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -317,6 +322,20 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier, trailing: (@Compos
 }
 
 /**
+ * Bridge between shared sliders and the editor's undo/preview machinery. The editor
+ * provides an implementation backed by EditorSession's transient gesture channel;
+ * screens without an editor session leave it null and sliders commit directly.
+ */
+interface SliderGestureSink {
+    /** Mid-drag sample; the implementation opens the gesture channel on first call. */
+    fun preview(apply: () -> Unit)
+    /** Closes the drag as one undo entry (no-op when nothing changed). */
+    fun end(label: String)
+}
+
+val LocalSliderGestureSink = androidx.compose.runtime.staticCompositionLocalOf<SliderGestureSink?> { null }
+
+/**
  * Bar slider with the value embedded inside the filled track (upstream EditorBarSlider).
  * Drag to adjust, double-tap the value to type an exact number. Same signature as before, so
  * every inspector slider upgrades at once. Long-press fine mode is approximated by the precise
@@ -338,9 +357,38 @@ fun LabeledSlider(
     val fraction = if (range > 0f) ((value - valueRange.start) / range).coerceIn(0f, 1f) else 0f
     val currentChange by rememberUpdatedState(onValueChange)
     val currentFinished by rememberUpdatedState(onValueChangeFinished)
+    // The drag coroutine is keyed on valueRange only, so `value` captured at launch
+    // goes stale after the first delta; always read the latest through updated state.
+    val currentValue by rememberUpdatedState(value)
     // Long-press enters fine mode (touch substitute for desktop Shift-drag): 5x finer travel.
     var fine by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
+    // Inspector sliders used to commit one undo entry per pointer event. When a
+    // gesture sink is provided (the editor), route the whole drag through the
+    // session's transient gesture channel: continuous preview, one undo entry.
+    val gestureSink = LocalSliderGestureSink.current
+    var gestureOpen by remember { mutableStateOf(false) }
+    // Mid-drag sample: continuous preview through the gesture channel, no undo spam.
+    fun emitDrag(next: Float) {
+        val clamped = next.coerceIn(valueRange.start, valueRange.endInclusive)
+        if (gestureSink != null) {
+            gestureOpen = true
+            gestureSink.preview { currentChange(clamped) }
+        } else {
+            currentChange(clamped)
+        }
+    }
+    // Discrete change (tap / exact entry): a single normal commit.
+    fun emitDiscrete(next: Float) {
+        currentChange(next.coerceIn(valueRange.start, valueRange.endInclusive))
+    }
+    fun finish() {
+        if (gestureOpen) {
+            gestureSink?.end(label)
+            gestureOpen = false
+        }
+        currentFinished?.invoke()
+    }
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(label, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
@@ -360,7 +408,7 @@ fun LabeledSlider(
                 PillButton("确定", onClick = {
                     val parsed = editText.toFloatOrNull()
                     if (parsed != null) {
-                        currentChange(parsed.coerceIn(valueRange.start, valueRange.endInclusive))
+                        emitDiscrete(parsed)
                         currentFinished?.invoke()
                     }
                     editing = false
@@ -374,22 +422,41 @@ fun LabeledSlider(
                     .clip(RoundedCornerShape(DogScDimens.RadiusXS))
                     .background(DogScColors.ControlWell)
                     .excludeSystemGestures()
+                    // TalkBack: the slider is a custom-drawn Box; without semantics it
+                    // was invisible to screen readers and had no adjust actions.
+                    .semantics {
+                        contentDescription = label
+                        stateDescription = valueLabel(value)
+                        progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(
+                            current = value,
+                            range = valueRange,
+                        )
+                        // TalkBack activation opens the exact-number entry, the accessible
+                        // equivalent of dragging (this Compose version has no slider role
+                        // or increase/decrease semantics actions).
+                        onClick {
+                            editText = currentValue.toString()
+                            editing = true
+                            true
+                        }
+                    }
                     .pointerInput(valueRange) {
                         detectHorizontalDragGestures(
                             onDragStart = { fine = false },
-                            onDragEnd = { currentFinished?.invoke(); fine = false },
+                            onDragEnd = { finish(); fine = false },
+                            onDragCancel = { finish(); fine = false },
                         ) { change, dragAmount ->
                             change.consume()
                             val mult = if (fine) 0.2f else 1f
                             val delta = dragAmount / size.width * range * mult
-                            currentChange((value + delta).coerceIn(valueRange.start, valueRange.endInclusive))
+                            emitDrag(currentValue + delta)
                         }
                     }
                     .pointerInput(valueRange) {
                         detectTapGestures(
                             onTap = { offset ->
                                 val f = (offset.x / size.width).coerceIn(0f, 1f)
-                                currentChange(valueRange.start + range * f)
+                                emitDiscrete(valueRange.start + range * f)
                                 currentFinished?.invoke()
                             },
                             onDoubleTap = {
