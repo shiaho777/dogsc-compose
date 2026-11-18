@@ -93,7 +93,8 @@ import kotlinx.coroutines.launch
 
 private val RulerHeight = 24.dp
 private val PrimaryHeight = 46.dp
-private val ClipHeight = 20.dp
+// 20dp rows with 8dp trim zones were near-impossible to hit with a finger.
+private val ClipHeight = 28.dp
 private val TrackGap = 4.dp
 private val HeaderWidth = 52.dp
 
@@ -1044,7 +1045,7 @@ private fun hitTest(
     val primary = with(density) { PrimaryHeight.toPx() }
     val clip = with(density) { ClipHeight.toPx() }
     val gap = with(density) { TrackGap.toPx() }
-    val edge = with(density) { 8.dp.toPx() }
+    val edge = with(density) { 14.dp.toPx() }
     if (y < ruler) return TimelineHit.Ruler(time)
     val primaryTop = ruler
     val primaryBottom = primaryTop + primary
@@ -1138,9 +1139,13 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawClip(
 
 private fun addZoomAtPlayhead(state: DogScAppState) {
     val project = state.project ?: return
-    val start = state.playhead
+    // At the very end the old code silently returned and the button looked dead.
+    val start = state.effectStartTime(state.playhead)
     val end = min(start + 1.2, state.outputDuration)
-    if (end - start < 0.2) return
+    if (end - start < 0.2) {
+        state.showToast("时间线太短，无法添加缩放", isError = true)
+        return
+    }
     state.updateProject("添加缩放") {
         TimelineEditor.addZoom(
             it,
@@ -1156,9 +1161,12 @@ private fun addZoomAtPlayhead(state: DogScAppState) {
 }
 
 private fun addScreenMotionAtPlayhead(state: DogScAppState) {
-    val start = state.playhead
+    val start = state.effectStartTime(state.playhead)
     val end = min(start + 2.0, state.outputDuration)
-    if (end - start < 0.2) return
+    if (end - start < 0.2) {
+        state.showToast("时间线太短，无法添加屏幕 3D", isError = true)
+        return
+    }
     state.updateProject("添加屏幕 3D") {
         TimelineEditor.addScreenMotion(
             it,
@@ -1182,9 +1190,12 @@ private fun addScreenMotionAtPlayhead(state: DogScAppState) {
 private fun addCameraMotionAtPlayhead(state: DogScAppState) {
     val project = state.project ?: return
     if (project.media?.camera == null) return
-    val start = state.playhead
+    val start = state.effectStartTime(state.playhead)
     val end = min(start + 2.0, state.outputDuration)
-    if (end - start < 0.2) return
+    if (end - start < 0.2) {
+        state.showToast("时间线太短，无法添加摄像运动", isError = true)
+        return
+    }
     state.updateProject("添加摄像运动") {
         TimelineEditor.addCameraMotion(
             it,
@@ -1206,9 +1217,12 @@ private fun addCameraMotionAtPlayhead(state: DogScAppState) {
 }
 
 private fun addMosaicAtPlayhead(state: DogScAppState) {
-    val start = state.playhead
+    val start = state.effectStartTime(state.playhead)
     val end = min(start + 2.0, state.outputDuration)
-    if (end - start < 0.2) return
+    if (end - start < 0.2) {
+        state.showToast("时间线太短，无法添加打码", isError = true)
+        return
+    }
     state.updateProject("添加打码") {
         TimelineEditor.addMosaic(
             it,

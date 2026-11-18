@@ -112,6 +112,22 @@ class AndroidPreviewAudio(
         applyVolumes()
     }
 
+    /**
+     * Rebuilds the slice graph after a timeline edit during playback. Unlike seek/start this
+     * never re-requests audio focus, and applyTrack skips the rebuild when the clip plan
+     * signature is unchanged, so volume-only edits stay cheap.
+     */
+    fun resync(project: RecorderProject, sourceDuration: Double, outputTime: Double) {
+        if (!wantsPlayback) return
+        val timelineMap = runCatching {
+            TimelineMap(project.timeline.sourceSequence, sourceDuration)
+        }.getOrNull() ?: return
+        val prepared = prepare(project, sourceDuration, timelineMap)
+        activeProject = project
+        applyTrack(systemTrack, prepared.first, outputTime)
+        applyTrack(microphoneTrack, prepared.second, outputTime)
+    }
+
     fun pause() {
         wantsPlayback = false
         focusLost = false

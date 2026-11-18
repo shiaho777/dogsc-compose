@@ -1645,7 +1645,7 @@ private fun MotionInspector(state: DogScAppState) {
         }
     } else {
         InspectorSection("手动缩放") {
-            Text("在时间线上拖动空白区域创建缩放，或点击下方按钮在播放头添加。", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
+            Text("点击下方按钮在播放头添加缩放；添加后可在时间线上拖动片段调整位置与时长。", color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
             PillButton("在播放头添加缩放", onClick = {
                 val start = state.effectStartTime(state.playhead)
@@ -1657,6 +1657,8 @@ private fun MotionInspector(state: DogScAppState) {
                             NormalizedPoint.Center, it.motion.defaultZoomEasing, duration = state.outputDuration,
                         )
                     }
+                } else {
+                    state.showToast("时间线太短，无法添加缩放", isError = true)
                 }
             }, icon = Icons.Outlined.Add, compact = true)
         }
@@ -1732,8 +1734,8 @@ private fun MotionInspector(state: DogScAppState) {
                                 state.updateOpening("调整开场顺序") { it.copy(elementOrder = order) }
                             }
                         },
-                        size = 24.dp,
-                        iconSize = 13.dp,
+                        size = 32.dp,
+                        iconSize = 14.dp,
                         enabled = orderIndex > 0,
                     )
                     SoftIconButton(
@@ -1747,8 +1749,8 @@ private fun MotionInspector(state: DogScAppState) {
                                 state.updateOpening("调整开场顺序") { it.copy(elementOrder = order) }
                             }
                         },
-                        size = 24.dp,
-                        iconSize = 13.dp,
+                        size = 32.dp,
+                        iconSize = 14.dp,
                         enabled = orderIndex in 0 until opening.elementOrder.lastIndex,
                     )
                     DogScSwitch(
@@ -2363,8 +2365,8 @@ private fun ColorRow(label: String, selected: HexColor, onSelect: (HexColor) -> 
         HexColor(0x7A7C84),
     )
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(74.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, color = DogScColors.SecondaryText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(64.dp))
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceBetween) {
             palette.forEach { color ->
                 ColorSwatch(color.toCompose(), selected = color == selected, onClick = { onSelect(color) }, size = 22.dp)
             }

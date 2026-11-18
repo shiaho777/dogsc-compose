@@ -54,6 +54,14 @@ class AndroidProjectRepository(private val context: Context) {
     }
     /** Deleted project ids stay tombstoned for this process so a late autosave cannot resurrect them. */
     private val trashedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    /** Serializes manifest writes/renames/deletes so a rename cannot race an in-flight save. */
+    private val writeMutex = Mutex()
+    /** Summary cache keyed by manifest stamp: the library must not re-probe every video on each refresh. */
+    private val summaryCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, ProjectSummary>>()
+    /** Last import failure reason, surfaced to the user instead of a generic toast. */
+    @Volatile
+    var lastImportError: String? = null
+        private set
     // Access-ordered LinkedHashMap is not thread-safe; imageFor runs from concurrent
     // IO coroutines (screen / camera / background loads), so every touch is guarded.
     private val previewCacheLock = Any()
@@ -80,14 +88,32 @@ class AndroidProjectRepository(private val context: Context) {
             ?: emptyList()
     }
 
+    /**
+     * Decodes the live manifest, falling back to the rolling previous/ backups when it is
+     * missing or corrupt. Without this the backups were write-only dead data and one bad
+     * write lost the project permanently.
+     */
+    private fun decodeManifestWithBackup(dir: File): RecorderProject? {
+        val manifest = File(dir, "project.json")
+        if (manifest.exists()) {
+            runCatching { ProjectCodec.decode(manifest.readText()) }.getOrNull()?.let { return it }
+        }
+        for (index in 1..3) {
+            val backup = File(dir, "previous/project.$index.json")
+            if (!backup.exists()) continue
+            val recovered = runCatching { ProjectCodec.decode(backup.readText()) }.getOrNull() ?: continue
+            Log.w("DogSCStore", "manifest unreadable for ${dir.name}; recovered from previous/project.$index.json")
+            // Promote the good backup so future saves rotate from a valid base.
+            runCatching { backup.copyTo(manifest, overwrite = true) }
+            return recovered
+        }
+        return null
+    }
+
     suspend fun loadProject(id: String): LoadedProject? = withContext(Dispatchers.IO) {
         val dir = File(projectsDir, id)
-        val manifest = File(dir, "project.json")
-        if (!manifest.exists()) return@withContext null
-        val decoded = runCatching { ProjectCodec.decode(manifest.readText()) }.getOrNull() ?: return@withContext null
-        val project = if (decoded.title.all { it.isDigit() } && decoded.title.isNotBlank()) {
-            decoded.copy(title = Loc.t("导入的视频"))
-        } else decoded
+        // A digit-only title is a legitimate user rename; normalization happens at import only.
+        val project = decodeManifestWithBackup(dir) ?: return@withContext null
         val summary = loadSummary(dir) ?: return@withContext null
         val screenFile = File(dir, project.media?.screen?.relativePath ?: "")
         if (!screenFile.exists() || screenFile.length() <= 0) return@withContext null
@@ -107,7 +133,11 @@ class AndroidProjectRepository(private val context: Context) {
 
     suspend fun saveProject(project: RecorderProject): Boolean = withContext(Dispatchers.IO) {
         if (isTrashed(project.id)) return@withContext false
+        writeMutex.withLock {
         runCatching {
+            // Re-check under the lock: a delete may have landed between the entry check and here;
+            // mkdirs() would otherwise recreate the folder and resurrect a ghost project.
+            if (isTrashed(project.id)) return@runCatching false
             val dir = File(projectsDir, project.id).apply { mkdirs() }
             val target = File(dir, "project.json")
             // Rolling previous backups (upstream ProjectStore): keep the last few manifests so a
@@ -129,6 +159,7 @@ class AndroidProjectRepository(private val context: Context) {
             ensureThumbnail(project, dir)
             true
         }.getOrDefault(false)
+        }
     }
 
     /** Rotates project.json -> previous/project.1.json -> .2 -> .3, dropping the oldest. */
@@ -146,12 +177,18 @@ class AndroidProjectRepository(private val context: Context) {
 
     suspend fun deleteProject(id: String): Boolean = withContext(Dispatchers.IO) {
         if (id == AndroidRecorderManager.activeProjectId) return@withContext false
-        val source = File(projectsDir, id)
-        if (!source.exists()) return@withContext false
-        val destination = File(trashDir, "${id}-${System.currentTimeMillis()}")
-        val moved = source.renameTo(destination)
-        if (moved) trashedIds.add(id)
-        moved
+        writeMutex.withLock {
+            val source = File(projectsDir, id)
+            if (!source.exists()) return@withLock false
+            // Tombstone before the move so a save already waiting on the lock cannot recreate
+            // the folder after it lands in the trash.
+            trashedIds.add(id)
+            val destination = File(trashDir, "${id}-${System.currentTimeMillis()}")
+            val moved = source.renameTo(destination)
+            if (!moved) trashedIds.remove(id)
+            summaryCache.remove(id)
+            moved
+        }
     }
 
     private fun isTrashed(id: String): Boolean {
@@ -194,9 +231,13 @@ class AndroidProjectRepository(private val context: Context) {
                         zip.closeEntry()
                     }
                 }
-            } ?: return@withContext null
+            } ?: run {
+                lastImportError = "无法读取所选文件"
+                return@withContext null
+            }
             importExtractedPackage(temp)
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            lastImportError = error.message?.take(200) ?: "解压项目包失败"
             null
         } finally {
             temp.deleteRecursively()
@@ -205,13 +246,16 @@ class AndroidProjectRepository(private val context: Context) {
 
     suspend fun importProjectDirectory(uri: String): String? = withContext(Dispatchers.IO) {
         val root = runCatching { DocumentFile.fromTreeUri(context, Uri.parse(uri)) }.getOrNull()
-            ?: return@withContext null
-        if (!root.isDirectory) return@withContext null
+        if (root == null || !root.isDirectory) {
+            lastImportError = "无法读取所选文件夹"
+            return@withContext null
+        }
         val temp = File(context.cacheDir, "project-dir-import-${UUID.randomUUID()}").apply { mkdirs() }
         try {
             copyDocumentTree(root, temp)
             importExtractedPackage(temp)
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            lastImportError = error.message?.take(200) ?: "读取项目文件夹失败"
             null
         } finally {
             temp.deleteRecursively()
@@ -220,20 +264,28 @@ class AndroidProjectRepository(private val context: Context) {
 
     private fun importExtractedPackage(temp: File): String? {
         val manifest = temp.walkTopDown().firstOrNull { it.isFile && it.name == "project.json" }
-            ?: return null
+        if (manifest == null) {
+            lastImportError = "包内没有 project.json，不是有效的项目包"
+            return null
+        }
         val root = manifest.parentFile ?: temp
         val rawProject = manifest.readText()
-        val directError = runCatching { ProjectCodec.decode(rawProject) }.exceptionOrNull()
+        val directResult = ProjectCodec.decodeWithResult(rawProject)
+        val directError = directResult.exceptionOrNull()
         val adaptedText = if (directError != null) ProjectPackageCompat.adapt(rawProject) else null
         val decoded = if (directError == null) {
-            ProjectCodec.decode(rawProject)
+            directResult.getOrNull()
         } else {
-            val adaptedError = adaptedText?.let { runCatching { ProjectCodec.decode(it) }.exceptionOrNull() }
+            val adaptedResult = adaptedText?.let { ProjectCodec.decodeWithResult(it) }
+            val adaptedError = adaptedResult?.exceptionOrNull()
             if (adaptedError != null) {
                 Log.e("DogSCImport", "decode failed direct=$directError adapted=$adaptedError", adaptedError)
             }
-            adaptedText?.let { ProjectCodec.decodeOrNull(it) }
-        } ?: return null
+            // Surface the real reason (e.g. "版本过高请升级") instead of a generic failure toast.
+            lastImportError = (adaptedError ?: directError)?.message?.take(200) ?: "项目文件无法解析"
+            adaptedResult?.getOrNull()
+        }
+        if (decoded == null) return null
         val newId = UUID.randomUUID().toString()
         val project = decoded.copy(
             id = newId,
@@ -244,25 +296,32 @@ class AndroidProjectRepository(private val context: Context) {
         val screenFile = screenRelative?.let { File(root, it) }
         if (screenFile == null || !screenFile.exists() || screenFile.length() <= 0) {
             Log.e("DogSCImport", "missing screen $screenRelative root=$root")
+            lastImportError = "项目包缺少屏幕录像文件"
             return null
         }
         if (probe(screenFile)?.durationSeconds?.let { it > 0.01 } != true &&
             project.media?.screen?.durationSeconds?.let { it > 0.01 } != true
         ) {
             Log.e("DogSCImport", "unreadable screen $screenFile")
+            lastImportError = "项目包内的录像无法读取，可能已损坏"
             return null
         }
         val destination = File(projectsDir, newId)
         if (!root.copyRecursively(destination, overwrite = true)) {
             Log.e("DogSCImport", "copy failed $root -> $destination")
+            // A failed copy used to leave an orphan directory that permanently ate disk space.
+            runCatching { destination.deleteRecursively() }
+            lastImportError = "复制项目文件失败，请检查存储空间"
             return null
         }
         return try {
             File(destination, "project.json").writeText(ProjectCodec.encode(project))
             ensureThumbnail(project, destination)
+            lastImportError = null
             newId
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
             runCatching { destination.deleteRecursively() }
+            lastImportError = error.message?.take(200) ?: "写入项目失败，请检查存储空间"
             null
         }
     }
@@ -330,8 +389,42 @@ class AndroidProjectRepository(private val context: Context) {
     }
 
     suspend fun renameProject(id: String, title: String): Boolean = withContext(Dispatchers.IO) {
-        val loaded = loadProject(id) ?: return@withContext false
-        saveProject(loaded.project.copy(title = title))
+        writeMutex.withLock {
+            if (isTrashed(id)) return@withLock false
+            val dir = File(projectsDir, id)
+            // Only the title field is rewritten from the on-disk manifest. Going through
+            // loadProject + saveProject could re-encode a stale snapshot over newer edits
+            // and raced the shared project.json.tmp with an in-flight autosave.
+            val decoded = decodeManifestWithBackup(dir) ?: return@withLock false
+            val manifest = File(dir, "project.json")
+            runCatching {
+                rotatePreviousBackups(dir, manifest)
+                val temp = File(dir, "project.json.tmp")
+                temp.writeText(ProjectCodec.encode(decoded.copy(title = title)))
+                if (!temp.renameTo(manifest)) {
+                    manifest.writeText(temp.readText())
+                    temp.delete()
+                }
+                summaryCache.remove(id)
+                true
+            }.getOrDefault(false)
+        }
+    }
+
+    /** Cheap source-side check so a multi-GB unsupported/corrupt file is rejected before copying. */
+    private fun probeUri(uri: Uri): Boolean {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+            val hasVideo = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes"
+            hasVideo && durationMs > 10
+        } catch (_: Throwable) {
+            false
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     suspend fun importVideo(uri: String): LoadedProject? = withContext(Dispatchers.IO) {
@@ -339,10 +432,18 @@ class AndroidProjectRepository(private val context: Context) {
         val dir = File(projectsDir, id)
         var imported: LoadedProject? = null
         try {
+            if (!probeUri(Uri.parse(uri))) {
+                lastImportError = "无法读取这个视频，格式可能不受支持或文件已损坏"
+                return@withContext null
+            }
             val mediaDir = File(dir, "media").apply { mkdirs() }
             val target = File(mediaDir, "screen.mp4")
             copyUriToFile(Uri.parse(uri), target)
-            val info = probe(target)?.takeIf { it.durationSeconds > 0.01 } ?: return@withContext null
+            val info = probe(target)?.takeIf { it.durationSeconds > 0.01 } ?: run {
+                lastImportError = "视频复制后无法解析，请检查存储空间"
+                return@withContext null
+            }
+            lastImportError = null
             val displayName = queryDisplayName(Uri.parse(uri)) ?: Loc.t("导入的视频")
             val rawTitle = displayName.substringBeforeLast('.').ifBlank { Loc.t("导入的视频") }
             val title = if (rawTitle.all { it.isDigit() } || rawTitle.length > 60) Loc.t("导入的视频") else rawTitle
@@ -371,7 +472,8 @@ class AndroidProjectRepository(private val context: Context) {
             val summary = loadSummary(dir) ?: return@withContext null
             imported = LoadedProject(project, info.durationSeconds, summary, emptyList())
             imported
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            lastImportError = error.message?.take(200) ?: "导入视频失败，请检查存储空间"
             null
         } finally {
             if (imported == null) runCatching { dir.deleteRecursively() }
@@ -573,19 +675,26 @@ class AndroidProjectRepository(private val context: Context) {
     }
 
     private fun loadSummary(dir: File): ProjectSummary? {
+        val project = decodeManifestWithBackup(dir) ?: return null
         val manifest = File(dir, "project.json")
-        if (!manifest.exists()) return null
-        val decoded = runCatching { ProjectCodec.decode(manifest.readText()) }.getOrNull() ?: return null
-        val project = if (decoded.title.all { it.isDigit() } && decoded.title.isNotBlank()) {
-            decoded.copy(title = Loc.t("导入的视频"))
-        } else decoded
         if (AndroidRecorderManager.activeProjectId != project.id) {
             recoverInterruptedMedia(dir, project)
         }
         val screenFile = File(dir, project.media?.screen?.relativePath ?: "")
-        val info = probe(screenFile)
         val thumb = File(dir, "thumb.jpg")
-        return ProjectSummary(
+        // Probing every video on each library refresh made rename/delete lag for seconds with
+        // many projects. Reuse the summary while manifest, media and thumbnail are untouched.
+        val stamp = buildString {
+            append(dir.absolutePath).append('|')
+            append(manifest.lastModified()).append(':').append(manifest.length()).append('|')
+            append(screenFile.lastModified()).append(':').append(screenFile.length()).append('|')
+            append(thumb.lastModified()).append(':').append(thumb.length())
+        }
+        summaryCache[project.id]?.let { (cachedStamp, cached) ->
+            if (cachedStamp == stamp) return cached
+        }
+        val info = probe(screenFile)
+        val summary = ProjectSummary(
             id = project.id,
             title = project.title,
             updatedAtEpochMs = manifest.lastModified(),
@@ -598,6 +707,8 @@ class AndroidProjectRepository(private val context: Context) {
             pixelHeight = info?.height ?: project.media?.screen?.pixelHeight,
             thumbnailPath = if (thumb.exists()) thumb.absolutePath else null,
         )
+        summaryCache[project.id] = stamp to summary
+        return summary
     }
 
     private fun ensureThumbnail(project: RecorderProject, dir: File) {

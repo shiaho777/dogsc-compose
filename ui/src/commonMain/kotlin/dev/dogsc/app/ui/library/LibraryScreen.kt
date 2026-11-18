@@ -98,6 +98,15 @@ fun LibraryScreen(
     var renameTarget by remember { mutableStateOf<ProjectSummary?>(null) }
     var renameText by remember { mutableStateOf("") }
     var showImportMenu by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var sortNewestFirst by remember { mutableStateOf(true) }
+    // With dozens of projects the only way to find one was scrolling; filter + sort locally.
+    val visibleProjects = remember(state.projects, searchQuery, sortNewestFirst) {
+        val filtered = if (searchQuery.isBlank()) state.projects
+        else state.projects.filter { it.title.contains(searchQuery.trim(), ignoreCase = true) }
+        if (sortNewestFirst) filtered.sortedByDescending { it.updatedAtEpochMs }
+        else filtered.sortedBy { it.title }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -196,10 +205,30 @@ fun LibraryScreen(
             )
             Spacer(Modifier.weight(1f))
             Text(
-                "${state.projects.size} 个项目",
+                "${visibleProjects.size} 个项目",
                 color = DogScColors.TertiaryText,
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+        if (state.projects.size > 3 || searchQuery.isNotBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    singleLine = true,
+                    placeholder = { Text("搜索项目") },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.width(8.dp))
+                PillButton(
+                    text = if (sortNewestFirst) "最近更新" else "按名称",
+                    onClick = { sortNewestFirst = !sortNewestFirst },
+                    variant = PillVariant.Ghost,
+                    compact = true,
+                )
+            }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -224,6 +253,13 @@ fun LibraryScreen(
                 onStartRecording = onStartRecording,
                 onImport = { host.pickVideo { uri -> if (uri != null) state.importVideo(uri) } },
             )
+        } else if (visibleProjects.isEmpty()) {
+            Text(
+                "没有匹配「${searchQuery.trim()}」的项目",
+                color = DogScColors.TertiaryText,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 250.dp),
@@ -232,7 +268,7 @@ fun LibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                items(state.projects, key = { it.id }) { project ->
+                items(visibleProjects, key = { it.id }) { project ->
                     ProjectCard(
                         project = project,
                         host = host,
