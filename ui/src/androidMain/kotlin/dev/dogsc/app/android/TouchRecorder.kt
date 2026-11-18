@@ -18,6 +18,16 @@ object TouchRecorder {
     private var screenHeight: Int = 2400
     private var lastX = 0.5
     private var lastY = 0.5
+    // Latest finger position from the raw motion stream; the click event itself
+    // carries no coordinates, so the clicked view's center is only a fallback.
+    private var lastMotionX: Double? = null
+    private var lastMotionY: Double? = null
+    private var lastMotionAtNanos: Long = 0
+    // Disk writes happen on a dedicated thread: the accessibility callbacks run on
+    // the main thread and a per-event flush at 60-120 Hz caused jank/ANR exposure.
+    private val pendingLines = java.util.ArrayDeque<String>()
+    private var ioThread: Thread? = null
+    @Volatile private var ioRunning = false
 
     @Synchronized
     fun start(file: File, width: Int, height: Int) {
@@ -29,13 +39,32 @@ object TouchRecorder {
         screenHeight = height.coerceAtLeast(1)
         lastX = 0.5
         lastY = 0.5
+        lastMotionX = null
+        lastMotionY = null
+        ioRunning = true
+        ioThread = Thread({ ioLoop() }, "DogSC-TouchIO").apply { start() }
     }
 
     @Synchronized
     fun stop() {
-        runCatching { writer?.flush() }
+        ioRunning = false
+        ioThread?.interrupt()
+        runCatching { ioThread?.join(1500) }
+        ioThread = null
+        // Drain whatever is still queued so a normal stop loses no events.
+        val target = writer
+        if (target != null) {
+            runCatching {
+                while (true) {
+                    val line = synchronized(pendingLines) { pendingLines.pollFirst() } ?: break
+                    target.write(line)
+                }
+                target.flush()
+            }
+        }
         runCatching { writer?.close() }
         writer = null
+        synchronized(pendingLines) { pendingLines.clear() }
     }
 
     val isActive: Boolean get() = writer != null
@@ -54,21 +83,64 @@ object TouchRecorder {
         write(normalizedX, normalizedY, kind)
     }
 
+    /** Raw finger position from the motion stream (Android 14+). */
+    @Synchronized
+    fun recordMotion(x: Double, y: Double) {
+        lastMotionX = x
+        lastMotionY = y
+        lastMotionAtNanos = SystemClock.elapsedRealtimeNanos()
+        recordTouch(x, y, "move")
+    }
+
     @Synchronized
     fun recordClick(x: Double, y: Double, longClick: Boolean = false) {
-        val normalizedX = (x / screenWidth).coerceIn(0.0, 1.0)
-        val normalizedY = (y / screenHeight).coerceIn(0.0, 1.0)
+        // Prefer the actual finger position when a recent motion sample exists;
+        // the clicked view's center can be far from the tap on large views.
+        val fresh = SystemClock.elapsedRealtimeNanos() - lastMotionAtNanos < 500_000_000L
+        val clickX = if (fresh) lastMotionX ?: x else x
+        val clickY = if (fresh) lastMotionY ?: y else y
+        val normalizedX = (clickX / screenWidth).coerceIn(0.0, 1.0)
+        val normalizedY = (clickY / screenHeight).coerceIn(0.0, 1.0)
         write(normalizedX, normalizedY, if (longClick) "rightClick" else "leftClick")
     }
 
     private fun write(x: Double, y: Double, kind: String) {
-        val target = writer ?: return
+        if (writer == null) return
         val time = (SystemClock.elapsedRealtimeNanos() - startedAtNanos) / 1_000_000_000.0
-        runCatching {
-            target.write(
-                "{\"time\":${"%.4f".format(time)},\"x\":${"%.5f".format(x)},\"y\":${"%.5f".format(y)},\"kind\":\"$kind\"}\n"
-            )
-            target.flush()
+        // Locale.ROOT is mandatory: comma-decimal locales emitted "time":0,1234,
+        // which is invalid JSON and silently discarded the whole pointer track.
+        val line = "{\"time\":${"%.4f".format(java.util.Locale.ROOT, time)}," +
+            "\"x\":${"%.5f".format(java.util.Locale.ROOT, x)}," +
+            "\"y\":${"%.5f".format(java.util.Locale.ROOT, y)},\"kind\":\"$kind\"}\n"
+        synchronized(pendingLines) {
+            // Bound memory if the disk stalls; dropping the oldest move samples is
+            // preferable to an unbounded queue.
+            if (pendingLines.size > 8192) pendingLines.pollFirst()
+            pendingLines.addLast(line)
+        }
+    }
+
+    private fun ioLoop() {
+        while (ioRunning) {
+            val target = writer
+            var wrote = false
+            if (target != null) {
+                runCatching {
+                    while (true) {
+                        val line = synchronized(pendingLines) { pendingLines.pollFirst() } ?: break
+                        target.write(line)
+                        wrote = true
+                    }
+                    if (wrote) target.flush()
+                }
+            }
+            if (!wrote) {
+                try {
+                    Thread.sleep(20)
+                } catch (_: InterruptedException) {
+                    return
+                }
+            }
         }
     }
 }
@@ -92,7 +164,7 @@ class DogScTouchAccessibilityService : android.accessibilityservice.Accessibilit
         if (!TouchRecorder.isActive) return
         when (motion.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE ->
-                TouchRecorder.recordTouch(motion.rawX.toDouble(), motion.rawY.toDouble(), "move")
+                TouchRecorder.recordMotion(motion.rawX.toDouble(), motion.rawY.toDouble())
             else -> Unit
         }
     }

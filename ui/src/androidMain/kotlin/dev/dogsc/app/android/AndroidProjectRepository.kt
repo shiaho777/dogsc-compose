@@ -54,12 +54,15 @@ class AndroidProjectRepository(private val context: Context) {
     }
     /** Deleted project ids stay tombstoned for this process so a late autosave cannot resurrect them. */
     private val trashedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    // Access-ordered LinkedHashMap is not thread-safe; imageFor runs from concurrent
+    // IO coroutines (screen / camera / background loads), so every touch is guarded.
+    private val previewCacheLock = Any()
     private val previewImageCache =
         object : LinkedHashMap<String, Pair<Double, ImageBitmap>>(8, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Double, ImageBitmap>>): Boolean =
                 size > 8
         }
-    private val videoDurationCache = HashMap<String, Double>()
+    private val videoDurationCache = java.util.concurrent.ConcurrentHashMap<String, Double>()
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -112,6 +115,11 @@ class AndroidProjectRepository(private val context: Context) {
             rotatePreviousBackups(dir, target)
             val temp = File(dir, "project.json.tmp")
             temp.writeText(ProjectCodec.encode(project))
+            // fsync before rename: without it a power loss can leave the renamed
+            // manifest empty even though the write "succeeded".
+            runCatching {
+                java.io.FileOutputStream(temp, true).use { it.fd.sync() }
+            }
             // Rename is atomic on Android's filesystem; deleting the old manifest first would
             // leave a crash window with no project.json at all.
             if (!temp.renameTo(target)) {
@@ -405,7 +413,7 @@ class AndroidProjectRepository(private val context: Context) {
 
     fun releasePreviewFrames() {
         runCatching { previewDecoder.close() }
-        previewImageCache.clear()
+        synchronized(previewCacheLock) { previewImageCache.clear() }
     }
 
     suspend fun loadThumbnail(project: RecorderProject, atTime: Double): ImageBitmap? {
@@ -426,10 +434,14 @@ class AndroidProjectRepository(private val context: Context) {
 
     private fun imageFor(file: File, bitmap: android.graphics.Bitmap): ImageBitmap {
         val frameTime = previewDecoder.lastFrameTime(file)
-        val cached = previewImageCache[file.absolutePath]
-        if (cached != null && cached.first == frameTime) return cached.second
+        synchronized(previewCacheLock) {
+            val cached = previewImageCache[file.absolutePath]
+            if (cached != null && cached.first == frameTime) return cached.second
+        }
         val image = bitmap.asImageBitmap()
-        previewImageCache[file.absolutePath] = frameTime to image
+        synchronized(previewCacheLock) {
+            previewImageCache[file.absolutePath] = frameTime to image
+        }
         return image
     }
 

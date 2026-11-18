@@ -163,6 +163,10 @@ class DogScAppState(
     private var playbackJob: Job? = null
     private var toastJob: Job? = null
     private var exportJob: Job? = null
+    // Export outlives the composition: a rememberCoroutineScope job dies when the UI
+    // is disposed, killing long exports mid-render. This scope is owned by the state
+    // (application lifetime); cancellation goes through cancelExport().
+    private val exportScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
     private var autosaveJob: Job? = null
     private val saveMutex = Mutex()
     private var toastCounter = 0L
@@ -701,6 +705,13 @@ class DogScAppState(
 
     fun updateProject(label: String, transform: (RecorderProject) -> RecorderProject?) {
         val session = session ?: return
+        // Slider drag in progress: capture the transformed project for the gesture
+        // channel instead of committing one undo entry per pointer event.
+        sliderCapture?.let { capture ->
+            val next = runCatching { transform(session.project) }.getOrNull() ?: return
+            capture(next)
+            return
+        }
         val committed = try {
             session.commit(label, transform)
         } catch (error: IllegalArgumentException) {
@@ -734,6 +745,34 @@ class DogScAppState(
             requestPreviewFrame(playhead)
         }
     }
+
+    /**
+     * Mid-drag sample from an inspector slider. The slider's change callback commits
+     * through the normal update APIs; this latch lets us capture the resulting project
+     * and feed it to the gesture channel instead of the undo stack. The callback runs
+     * synchronously on the same (main) thread, so the wait is immediate in practice;
+     * the timeout only guards a callback that chose not to update.
+     */
+    fun previewSliderSample(label: String, apply: () -> Unit) {
+        val session = session ?: return
+        var captured: RecorderProject? = null
+        sliderCapture = { candidate -> captured = candidate }
+        try {
+            // The callback runs synchronously on this thread and routes through
+            // updateProject, which hands the transform here instead of committing.
+            apply()
+        } finally {
+            sliderCapture = null
+        }
+        val next = captured ?: return
+        if (session.previewGesture { next }) {
+            sessionRevision++
+            requestPreviewFrame(playhead)
+        }
+    }
+
+    /** Set while a slider sample is being captured; updateProject routes here instead of committing. */
+    private var sliderCapture: ((RecorderProject) -> Unit)? = null
 
     /** Closes the drag as one undo entry, then runs the normal post-edit refresh + autosave. */
     fun endGesture(label: String) {
@@ -1371,7 +1410,7 @@ class DogScAppState(
         lastExportState = null
         exportProgressState = ExportProgress(0f, "正在准备素材")
         exportInFlight = true
-        exportJob = scope.launch {
+        exportJob = exportScope.launch {
             try {
             val result = try {
                 platform.export(

@@ -335,6 +335,15 @@ class ZoomAnimationTrack(
         return if (abs(previous.endTime - to.startTime) <= ZoomInterpolator.AdjacencyTolerance) previous else null
     }
 
+    /** prefixEffectEnd[i] = max effectEndTime over animations[0..i]; precomputed once. */
+    private val prefixEffectEnd: DoubleArray = DoubleArray(animations.size).also { array ->
+        var running = Double.NEGATIVE_INFINITY
+        for (i in animations.indices) {
+            running = max(running, animations[i].effectEndTime)
+            array[i] = running
+        }
+    }
+
     private fun activeClipIndex(at: Double): Int? {
         if (!at.isFinite() || animations.isEmpty()) return null
         var lower = 0
@@ -349,8 +358,7 @@ class ZoomAnimationTrack(
             val clip = animations[index]
             if (at >= clip.startTime && at <= clip.effectEndTime) return index
             if (index == 0) return null
-            val prefixMax = (0..index - 1).maxOf { animations[it].effectEndTime }
-            if (prefixMax < at) return null
+            if (prefixEffectEnd[index - 1] < at) return null
             index--
         }
         return null

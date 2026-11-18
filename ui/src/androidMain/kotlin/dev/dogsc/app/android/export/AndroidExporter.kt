@@ -210,7 +210,12 @@ class AndroidExporter(
 
                 try {
                     for (index in 0 until frameCount) {
+                        // The loop is CPU-bound and never suspends on its own; without
+                        // ensureActive a cancelled composition scope kept rendering to
+                        // completion, writing output nobody consumes.
+                        ensureActive()
                         if (cancelled) { discardCancelledOutput(context, request); return@withContext ExportResult.Cancelled }
+                        if (index % 24 == 0) kotlinx.coroutines.yield()
                         val time = trimStart + min(index.toDouble() / frameRate, exportDuration)
                         val sourceTime = timelineMap.sourceTimeAtOutput(time)
                             ?: timelineMap.sourceTimeAtOutput(min(time, outputDuration - 0.0001))
@@ -328,6 +333,12 @@ class AndroidExporter(
                     runCatching { finalFile.delete() }
                 }
             } catch (error: Throwable) {
+                if (error is kotlinx.coroutines.CancellationException) {
+                    // Scope cancellation (UI disposed / export job cancelled) must clean
+                    // the placeholder document too, then propagate the cancellation.
+                    discardCancelledOutput(context, request)
+                    throw error
+                }
                 Log.e("DogSCExport", "export failed", error)
                 if (cancelled) {
                     discardCancelledOutput(context, request)
@@ -345,13 +356,37 @@ class AndroidExporter(
 
     private fun copyToDestination(source: File, outputUri: String) {
         val uri = Uri.parse(outputUri)
-        val output = if (uri.scheme == "file") {
-            FileOutputStream(File(uri.path ?: error("无效的输出路径")))
+        if (uri.scheme == "file") {
+            // Copy beside the destination, then rename: streaming straight into the
+            // target left a corrupt "finished" file when the process died mid-copy.
+            val target = File(uri.path ?: error("无效的输出路径"))
+            target.parentFile?.mkdirs()
+            val temp = File(target.parentFile, ".${target.name}.part")
+            try {
+                FileOutputStream(temp).use { out ->
+                    source.inputStream().use { input -> input.copyTo(out, 1 shl 20) }
+                    out.fd.sync()
+                }
+                if (!temp.renameTo(target)) {
+                    FileOutputStream(target).use { out ->
+                        temp.inputStream().use { input -> input.copyTo(out, 1 shl 20) }
+                        out.fd.sync()
+                    }
+                }
+            } finally {
+                runCatching { temp.delete() }
+            }
         } else {
-            context.contentResolver.openOutputStream(uri) ?: error("无法写入导出文件")
-        }
-        output.use { target ->
-            source.inputStream().use { input -> input.copyTo(target, 1 shl 20) }
+            // SAF documents cannot be renamed atomically; stream into the document
+            // and fsync so a completed copy is durable before we report success.
+            val output = context.contentResolver.openOutputStream(uri) ?: error("无法写入导出文件")
+            output.use { target ->
+                source.inputStream().use { input -> input.copyTo(target, 1 shl 20) }
+                target.flush()
+                runCatching {
+                    if (target is FileOutputStream) target.fd.sync()
+                }
+            }
         }
     }
 
@@ -481,13 +516,39 @@ internal class CanvasVideoEncoder(
         }
     }
 
+    // Duplicate frames (static screen content) reuse the previous bitmap instance;
+    // skip the ~10 MB getPixels + YUV conversion when nothing changed.
+    private var lastConvertedBitmap: Bitmap? = null
+    private var released = false
+
     override fun encodeFrame(bitmap: Bitmap, presentationTimeUs: Long) {
-        bitmap.getPixels(argb, 0, width, 0, 0, width, height)
-        argbToYuv420()
-        val inputIndex = codec.dequeueInputBuffer(10_000)
-        if (inputIndex >= 0) {
-            val input = codec.getInputBuffer(inputIndex) ?: return
+        if (bitmap !== lastConvertedBitmap) {
+            bitmap.getPixels(argb, 0, width, 0, 0, width, height)
+            argbToYuv420()
+            lastConvertedBitmap = bitmap
+        }
+        var inputIndex = -1
+        repeat(50) {
+            if (inputIndex < 0) {
+                inputIndex = codec.dequeueInputBuffer(10_000)
+                if (inputIndex < 0) drain(false)
+            }
+        }
+        if (inputIndex < 0) {
+            // Dropping the frame silently shortened the video and desynced audio.
+            throw IllegalStateException("视频编码器无响应，导出已中止")
+        }
+        val input = codec.getInputBuffer(inputIndex)
+        if (input == null) {
+            codec.queueInputBuffer(inputIndex, 0, 0, presentationTimeUs, 0)
+        } else {
             input.clear()
+            if (input.remaining() < yuv.size) {
+                // Small-input codecs: feed in capacity-sized chunks is not possible for
+                // a single access unit; surface a clear error instead of BufferOverflow.
+                codec.queueInputBuffer(inputIndex, 0, 0, presentationTimeUs, 0)
+                throw IllegalStateException("编码器输入缓冲过小，无法容纳当前分辨率")
+            }
             input.put(yuv)
             codec.queueInputBuffer(inputIndex, 0, yuv.size, presentationTimeUs, 0)
         }
@@ -495,18 +556,27 @@ internal class CanvasVideoEncoder(
     }
 
     override fun finish() {
-        val inputIndex = codec.dequeueInputBuffer(10_000)
-        if (inputIndex >= 0) {
-            codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+        if (released) return
+        try {
+            var inputIndex = -1
+            repeat(50) {
+                if (inputIndex < 0) {
+                    inputIndex = codec.dequeueInputBuffer(10_000)
+                    if (inputIndex < 0) drain(false)
+                }
+            }
+            if (inputIndex >= 0) {
+                codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            }
+            drain(true)
+        } finally {
+            release()
         }
-        drain(true)
-        runCatching { codec.stop() }
-        runCatching { codec.release() }
-        if (muxerStarted) runCatching { muxer.stop() }
-        runCatching { muxer.release() }
     }
 
     override fun release() {
+        if (released) return
+        released = true
         runCatching { codec.stop() }
         runCatching { codec.release() }
         if (muxerStarted) runCatching { muxer.stop() }

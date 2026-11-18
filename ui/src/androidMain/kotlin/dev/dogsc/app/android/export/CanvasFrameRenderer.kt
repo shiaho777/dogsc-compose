@@ -60,8 +60,6 @@ class CanvasFrameRenderer(
     private val matrix = Matrix()
     private var cardBitmap: Bitmap? = null
     private var cardCanvas: Canvas? = null
-    private var blurBitmap: Bitmap? = null
-    private var blurCanvas: Canvas? = null
 
     fun render(
         scene: FrameScene,
@@ -70,6 +68,7 @@ class CanvasFrameRenderer(
         background: Bitmap?,
         stickers: Map<String, Bitmap>,
     ): Bitmap {
+        frameGeneration++
         outputCanvas.drawColor(Color.BLACK)
         drawBackground(scene, background)
         drawScreen(scene, screen)
@@ -99,7 +98,7 @@ class CanvasFrameRenderer(
                 if (bitmap != null) {
                     drawCover(bitmap, 0f, 0f, width.toFloat(), height.toFloat())
                     if (scene.background.blurRadius > 0.1) {
-                        val small = makeBlurred(bitmap, RenderParams.BackgroundBlurDivisor)
+                        val small = makeBlurred(bitmap, RenderParams.BackgroundBlurDivisor, "background")
                         paint.alpha = min(255, (scene.background.blurRadius / 96 * 255).toInt()).coerceAtLeast(24)
                         drawCover(small, 0f, 0f, width.toFloat(), height.toFloat())
                         paint.alpha = 255
@@ -248,7 +247,7 @@ class CanvasFrameRenderer(
                 close()
             }
             fill.color = Color.argb((shadow.opacity * RenderParams.ScreenShadowAlpha).toInt(), 0, 0, 0)
-            fill.maskFilter = android.graphics.BlurMaskFilter(max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            fill.maskFilter = blurFilter(max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()))
             outputCanvas.drawPath(shadowPath, fill)
             fill.maskFilter = null
         }
@@ -351,7 +350,7 @@ class CanvasFrameRenderer(
             // Sticker backdrop blur: paste a downscaled-blur copy over the whole screen card.
             val backdropBlur = scene.stickerBackdrop.screenBlur
             if (backdropBlur > 0.1) {
-                val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor)
+                val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor, "screen")
                 paint.alpha = (backdropBlur / 80.0 * 235).toInt().coerceIn(0, 255)
                 canvas.drawBitmap(blurred, Rect(0, 0, blurred.width, blurred.height), content, paint)
                 paint.alpha = 255
@@ -367,7 +366,7 @@ class CanvasFrameRenderer(
             val r = (mosaic.cornerRadius * min(rect.width(), rect.height())).toFloat()
             if (mosaic.style == MosaicEffectStyle.BLUR) {
                 if (screen != null) {
-                    val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor)
+                    val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor, "screen")
                     canvas.save()
                     canvas.clipPath(roundedPath(rect, r))
                     paint.alpha = (mosaic.intensity * mosaic.transitionProgress * 235).toInt().coerceIn(0, 255)
@@ -394,7 +393,7 @@ class CanvasFrameRenderer(
             // Focus blur: paste a downscaled-blur copy of the screen outside the clear region.
             val blurStrength = focus.effect.blur * focus.progress
             if (screen != null && blurStrength > 0.01) {
-                val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor)
+                val blurred = makeBlurred(screen, RenderParams.MosaicBlurDivisor, "screen")
                 val outside = Path().apply {
                     fillType = Path.FillType.EVEN_ODD
                     addRect(content, Path.Direction.CW)
@@ -464,7 +463,7 @@ class CanvasFrameRenderer(
         val clip = roundedPath(rect, radius)
         scene.shadow?.let { shadow ->
             fill.color = Color.argb((shadow.opacity * RenderParams.CameraShadowAlpha).toInt(), 0, 0, 0)
-            fill.maskFilter = android.graphics.BlurMaskFilter(max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            fill.maskFilter = blurFilter(max(shadow.radius.toFloat(), RenderParams.MinShadowRadius.toFloat()))
             outputCanvas.drawPath(clip, fill)
             fill.maskFilter = null
         }
@@ -529,7 +528,7 @@ class CanvasFrameRenderer(
             val clip = roundedPath(rect, stickerRadius)
             if (sticker.shadowOpacity > 0) {
                 fill.color = Color.argb((sticker.shadowOpacity * RenderParams.StickerShadowAlpha).toInt(), 0, 0, 0)
-                fill.maskFilter = android.graphics.BlurMaskFilter(max(sticker.shadowRadius.toFloat(), 1f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                fill.maskFilter = blurFilter(max(sticker.shadowRadius.toFloat(), 1f))
                 outputCanvas.drawPath(clip, fill)
                 fill.maskFilter = null
             }
@@ -680,30 +679,63 @@ class CanvasFrameRenderer(
         if (mirrored) outputCanvas.restore()
     }
 
-    private fun makeBlurred(bitmap: Bitmap, divisor: Int): Bitmap {
+    // One reusable downscale target per (source identity, size). The previous single
+    // slot alternated between background and screen dimensions every frame, forcing a
+    // multi-MB createBitmap per frame; multiple mosaics also re-blurred the same screen
+    // within one frame. Entries are invalidated when the source frame changes.
+    private class BlurEntry(var source: Bitmap, var generation: Long, val bitmap: Bitmap, val canvas: Canvas)
+    private val blurEntries = HashMap<String, BlurEntry>()
+    private var frameGeneration = 0L
+
+    private fun makeBlurred(bitmap: Bitmap, divisor: Int): Bitmap = makeBlurred(bitmap, divisor, "misc")
+
+    private fun makeBlurred(bitmap: Bitmap, divisor: Int, role: String): Bitmap {
         val targetW = max(bitmap.width / divisor, 1)
         val targetH = max(bitmap.height / divisor, 1)
-        val current = blurBitmap
-        val small = if (current == null || current.width != targetW || current.height != targetH) {
-            val created = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-            blurBitmap = created
-            blurCanvas = Canvas(created)
-            created
+        val key = "$role:${targetW}x$targetH"
+        val entry = blurEntries[key]
+        val small: Bitmap
+        val canvas: Canvas
+        if (entry != null && entry.bitmap.width == targetW && entry.bitmap.height == targetH) {
+            if (entry.source === bitmap && entry.generation == frameGeneration) return entry.bitmap
+            small = entry.bitmap
+            canvas = entry.canvas
+            entry.source = bitmap
+            entry.generation = frameGeneration
         } else {
-            current
+            entry?.bitmap?.recycle()
+            small = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            canvas = Canvas(small)
+            blurEntries[key] = BlurEntry(bitmap, frameGeneration, small, canvas)
         }
-        val canvas = blurCanvas ?: Canvas(small)
         canvas.drawBitmap(bitmap, null, Rect(0, 0, targetW, targetH), paint)
         return small
     }
 
-    private fun roundedPath(rect: RectF, radius: Float): Path = Path().apply {
-        addRoundRect(rect, max(radius, 0f), max(radius, 0f), Path.Direction.CW)
+    // Reused across draw calls within a frame: every consumer copies the path into a
+    // canvas clip or another Path immediately, so resetting here is safe and avoids
+    // several Path allocations per rendered frame.
+    private val reusablePath = Path()
+    private fun roundedPath(rect: RectF, radius: Float): Path {
+        reusablePath.reset()
+        reusablePath.addRoundRect(rect, max(radius, 0f), max(radius, 0f), Path.Direction.CW)
+        return reusablePath
+    }
+
+    private var cachedBlurRadius = -1f
+    private var cachedBlurFilter: android.graphics.BlurMaskFilter? = null
+    private fun blurFilter(radius: Float): android.graphics.BlurMaskFilter {
+        if (cachedBlurFilter == null || cachedBlurRadius != radius) {
+            cachedBlurRadius = radius
+            cachedBlurFilter = android.graphics.BlurMaskFilter(radius, android.graphics.BlurMaskFilter.Blur.NORMAL)
+        }
+        return cachedBlurFilter!!
     }
 
     fun release() {
         cardBitmap?.recycle()
-        blurBitmap?.recycle()
+        blurEntries.values.forEach { runCatching { it.bitmap.recycle() } }
+        blurEntries.clear()
         output.recycle()
     }
 }

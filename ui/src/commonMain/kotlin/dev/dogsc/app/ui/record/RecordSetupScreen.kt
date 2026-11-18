@@ -427,10 +427,38 @@ fun RecordSetupScreen(state: DogScAppState, host: DogScHost) {
 fun RecordingScreen(state: DogScAppState, host: DogScHost) {
     val recorder by host.recorderState.collectAsState()
     val elapsed = recorder.elapsedSeconds
+    var showDiscardConfirm by remember { mutableStateOf(false) }
+    if (showDiscardConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDiscardConfirm = false },
+            containerColor = DogScColors.Panel,
+            title = { Text("丢弃这次录制？", color = DogScColors.PrimaryText) },
+            text = {
+                Text(
+                    "已录制的内容将被永久删除，无法恢复。如果只是想结束，请选择“停止录制”。",
+                    color = DogScColors.SecondaryText,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    showDiscardConfirm = false
+                    host.discardRecording()
+                }) { Text("丢弃", color = DogScColors.Danger) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showDiscardConfirm = false }) {
+                    Text("继续录制", color = DogScColors.PrimaryText)
+                }
+            },
+        )
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(DogScColors.Background)
+            // Landscape phones have little vertical room; without scrolling the stop
+            // and discard controls were clipped off-screen.
+            .verticalScroll(androidx.compose.foundation.rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -508,7 +536,7 @@ fun RecordingScreen(state: DogScAppState, host: DogScHost) {
         Spacer(Modifier.height(16.dp))
         PillButton(
             "丢弃这次录制",
-            onClick = { host.discardRecording() },
+            onClick = { showDiscardConfirm = true },
             variant = PillVariant.Ghost,
             enabled = !recorder.isFinishing,
         )

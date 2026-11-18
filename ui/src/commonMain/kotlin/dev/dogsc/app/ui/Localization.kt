@@ -14,8 +14,16 @@ object Loc {
         private set
 
     fun applyEnglish(value: Boolean) {
-        english = value
+        if (english != value) {
+            english = value
+            translationCache.clear()
+        }
     }
+
+    // Every Text() miss used to scan ~30 regexes; the transport timecode hits that
+    // path on every playback tick. Cache resolved translations (bounded) instead.
+    private const val CacheLimit = 512
+    private val translationCache = HashMap<String, String>()
 
     /** Compact labels for the floating recorder, where horizontal space is scarce. */
     fun tShort(source: String): String {
@@ -27,17 +35,22 @@ object Loc {
     fun t(source: String): String {
         if (!english) return source
         En[source]?.let { return it }
+        translationCache[source]?.let { return it }
+        var resolved = source
         for ((pattern, replacement) in Rules) {
             val match = pattern.matchEntire(source) ?: continue
-            return pattern.replace(source) { m ->
+            resolved = pattern.replace(source) { m ->
                 var result = replacement
                 for (i in 1..m.groupValues.lastIndex) {
                     result = result.replace("{$i}", m.groupValues[i])
                 }
                 result
             }
+            break
         }
-        return source
+        if (translationCache.size >= CacheLimit) translationCache.clear()
+        translationCache[source] = resolved
+        return resolved
     }
 
     private val Rules: List<Pair<Regex, String>> = listOf(

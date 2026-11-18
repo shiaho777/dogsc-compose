@@ -129,6 +129,9 @@ class EditorSession(
         val baseline = gestureBaseline ?: return
         gestureBaseline = null
         project = baseline
+        // previewGesture optimistically set isDirty; if nothing was ever committed,
+        // a cancelled drag must not leave a phantom "unsaved changes" state.
+        if (!stack.canUndo) isDirty = false
     }
 
     fun undo(): Boolean {

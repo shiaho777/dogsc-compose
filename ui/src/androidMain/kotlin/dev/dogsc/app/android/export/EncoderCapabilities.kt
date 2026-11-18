@@ -45,6 +45,9 @@ object EncoderCapabilities {
             w = ((w * 3) / 4) / 2 * 2
             h = ((h * 3) / 4) / 2 * 2
         }
-        return width to height
+        // Returning the original unsupported size guaranteed a configure failure.
+        // Fall back to a small universally-supported size instead; the export sheet
+        // already surfaces the effective dimensions and the encoder-limit note.
+        return 320 to 180
     }
 }

@@ -124,15 +124,37 @@ class AacAudioRecorder(
         audioRecord = null
         thread?.join(2000)
         thread = null
-        val inputIndex = codec.dequeueInputBuffer(10_000)
-        if (inputIndex >= 0) {
-            codec.queueInputBuffer(inputIndex, 0, 0, ptsForSamples(totalSamples.get()), MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+        // Finalize must complete even when the codec stalls or errors: the recorded
+        // .part fragments are recoverable, but only if closeFragments/finish run.
+        try {
+            signalEndOfStream()
+            drain(true)
+        } catch (error: Throwable) {
+            Log.w("DogSCAudio", "Audio finalize failed; keeping recoverable fragments", error)
+        } finally {
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+            runCatching { writer.closeFragments() }
+            runCatching {
+                FragmentedRecordingRecovery.finish(FragmentedRecordingRecovery.partFileFor(outputFile), outputFile)
+            }
         }
-        drain(true)
-        runCatching { codec.stop() }
-        runCatching { codec.release() }
-        writer.closeFragments()
-        FragmentedRecordingRecovery.finish(FragmentedRecordingRecovery.partFileFor(outputFile), outputFile)
+    }
+
+    /**
+     * Queues EOS with retries. A single dequeue timeout used to skip EOS entirely,
+     * leaving drain(true) spinning forever on a codec that never sees end-of-stream.
+     */
+    private fun signalEndOfStream() {
+        repeat(50) {
+            val inputIndex = codec.dequeueInputBuffer(10_000)
+            if (inputIndex >= 0) {
+                codec.queueInputBuffer(inputIndex, 0, 0, ptsForSamples(totalSamples.get()), MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                return
+            }
+            drain(false)
+        }
+        Log.w("DogSCAudio", "Could not queue EOS after retries; drain will bail out on idle")
     }
 
     private fun pump(bufferSize: Int) {
@@ -162,7 +184,13 @@ class AacAudioRecorder(
                 drain(false)
                 continue
             }
-            val input = codec.getInputBuffer(inputIndex) ?: return
+            val input = codec.getInputBuffer(inputIndex)
+            if (input == null) {
+                // Return the dequeued index to the codec; dropping it leaks the buffer
+                // and eventually starves the encoder.
+                codec.queueInputBuffer(inputIndex, 0, 0, ptsForSamples(totalSamples.get()), 0)
+                return
+            }
             input.clear()
             val maxSamples = min(min(input.remaining() / 2, 4096), count - offset)
             if (maxSamples <= 0) {
@@ -189,10 +217,19 @@ class AacAudioRecorder(
 
     private fun drain(endOfStream: Boolean) {
         val info = MediaCodec.BufferInfo()
+        var idle = 0
         while (true) {
             val index = codec.dequeueOutputBuffer(info, if (endOfStream) 10_000 else 0)
             when {
-                index == MediaCodec.INFO_TRY_AGAIN_LATER -> if (!endOfStream) return
+                index == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                    if (!endOfStream) return
+                    // Bail out instead of spinning forever when EOS never arrived
+                    // (stalled codec); the .part fragments stay recoverable.
+                    if (++idle > 500) {
+                        Log.w("DogSCAudio", "Audio drain idle timeout; stopping finalize")
+                        return
+                    }
+                }
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     if (!muxerStarted) {
                         writer.addTrack(codec.outputFormat)

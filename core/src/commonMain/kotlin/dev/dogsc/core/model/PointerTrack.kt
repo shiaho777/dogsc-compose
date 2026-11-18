@@ -645,6 +645,21 @@ class ProjectPointerTrack(
             abs(segment.outputRange.start - clip.startTime) <= EndpointEpsilon
     }
 
+    // Per-frame hot path: the 120 Hz spring integration over the whole clip is
+    // deterministic in (clip, entry focus, spring params), so cache the last two
+    // results (scene evaluation asks for the active clip and its inherited
+    // predecessor every frame). Without this, a 30 s clip at 60 fps re-integrates
+    // ~430 k spring steps per second.
+    private data class CameraFocusCacheKey(
+        val clip: ZoomAnimationClip,
+        val entryFocus: NormalizedPoint,
+        val mass: Double,
+        val stiffness: Double,
+        val damping: Double,
+    )
+    private var cameraFocusCacheA: Pair<CameraFocusCacheKey, List<Pair<Double, NormalizedPoint>>>? = null
+    private var cameraFocusCacheB: Pair<CameraFocusCacheKey, List<Pair<Double, NormalizedPoint>>>? = null
+
     fun automaticCameraFocus(
         at: Double,
         clip: ZoomAnimationClip,
@@ -652,11 +667,28 @@ class ProjectPointerTrack(
     ): NormalizedPoint {
         val baseFocus = clip.focus.constrained(ZoomViewportTransform.FocusEdgeInset)
         if (clip.origin != ZoomKeyframeOrigin.AUTOMATIC || !at.isFinite() || clip.endTime <= clip.startTime) return baseFocus
-        val samples = makeAutomaticCameraFocusSamples(
-            clip,
-            automaticEntryFocus(clip, baseFocus),
-            motion,
+        val entryFocus = automaticEntryFocus(clip, baseFocus)
+        val key = CameraFocusCacheKey(
+            clip, entryFocus,
+            max(motion.screenSpringMass, 0.01),
+            max(motion.screenSpringStiffness, 0.01),
+            max(motion.screenSpringDamping, 0.01),
         )
+        val samples = when {
+            cameraFocusCacheA?.first == key -> cameraFocusCacheA!!.second
+            cameraFocusCacheB?.first == key -> {
+                val hit = cameraFocusCacheB!!
+                cameraFocusCacheB = cameraFocusCacheA
+                cameraFocusCacheA = hit
+                hit.second
+            }
+            else -> {
+                val computed = makeAutomaticCameraFocusSamples(clip, entryFocus, motion)
+                cameraFocusCacheB = cameraFocusCacheA
+                cameraFocusCacheA = key to computed
+                computed
+            }
+        }
         return interpolatedFocus(at.coerceIn(clip.startTime, clip.endTime), samples, baseFocus)
     }
 

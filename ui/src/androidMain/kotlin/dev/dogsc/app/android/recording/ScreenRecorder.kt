@@ -129,38 +129,58 @@ class ScreenRecorder(
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
         runCatching { codec.signalEndOfInputStream() }
-        drainThread?.join(2500)
+        val drainer = drainThread
+        drainer?.join(2500)
         running = false
         drainThread = null
+        if (drainer != null && drainer.isAlive) {
+            // The drain thread is wedged inside the codec. Stopping the codec or the
+            // writer underneath it would race a non-thread-safe muxer; leave both
+            // alone and keep the .part fragments recoverable instead.
+            error = error ?: "编码器未能及时停止，已保留可恢复的录制片段"
+            Log.w("DogSCScreen", "Drain thread did not finish; keeping recoverable fragments")
+            runCatching { inputSurface.release() }
+            return
+        }
         runCatching { codec.stop() }
         runCatching { codec.release() }
         runCatching { inputSurface.release() }
-        writer.closeFragments()
-        FragmentedRecordingRecovery.finish(FragmentedRecordingRecovery.partFileFor(outputFile), outputFile)
+        runCatching { writer.closeFragments() }
+        runCatching {
+            FragmentedRecordingRecovery.finish(FragmentedRecordingRecovery.partFileFor(outputFile), outputFile)
+        }
     }
 
     private fun drainLoop() {
         val info = MediaCodec.BufferInfo()
-        while (running) {
-            val index = codec.dequeueOutputBuffer(info, 10_000)
-            when {
-                index == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
-                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    if (!muxerStarted) {
-                        writer.addTrack(codec.outputFormat)
-                        muxerStarted = true
+        try {
+            while (running) {
+                val index = codec.dequeueOutputBuffer(info, 10_000)
+                when {
+                    index == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+                    index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        if (!muxerStarted) {
+                            writer.addTrack(codec.outputFormat)
+                            muxerStarted = true
+                        }
                     }
-                }
-                index >= 0 -> {
-                    val buffer = codec.getOutputBuffer(index)
-                    if (buffer != null && info.size > 0 && muxerStarted) {
-                        writer.writeSample(buffer, info)
-                        lastPresentationTimeUs = max(lastPresentationTimeUs, info.presentationTimeUs)
+                    index >= 0 -> {
+                        val buffer = codec.getOutputBuffer(index)
+                        if (buffer != null && info.size > 0 && muxerStarted) {
+                            writer.writeSample(buffer, info)
+                            lastPresentationTimeUs = max(lastPresentationTimeUs, info.presentationTimeUs)
+                        }
+                        codec.releaseOutputBuffer(index, false)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
                     }
-                    codec.releaseOutputBuffer(index, false)
-                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
                 }
             }
+        } catch (failure: Throwable) {
+            // Disk full / codec error on this thread used to hit the default uncaught
+            // handler and kill the process mid-recording. Surface the error and let
+            // stop() finalize the recoverable fragments.
+            Log.e("DogSCScreen", "Screen drain failed", failure)
+            error = "录制写入失败：${failure.message ?: failure.javaClass.simpleName}"
         }
     }
 

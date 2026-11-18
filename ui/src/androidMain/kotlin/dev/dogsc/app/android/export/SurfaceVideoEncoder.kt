@@ -38,7 +38,7 @@ class SurfaceVideoEncoder(
     private val output: File,
 ) : VideoEncoder {
     private val codec: MediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-    private val muxer: MediaMuxer
+    private var muxer: MediaMuxer? = null
     private var trackIndex = -1
     private var muxerStarted = false
     private val bufferInfo = MediaCodec.BufferInfo()
@@ -65,21 +65,30 @@ class SurfaceVideoEncoder(
         vertexBuffer = ByteBuffer.allocateDirect(vertices.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(vertices).position(0) as FloatBuffer
         texBuffer = ByteBuffer.allocateDirect(uvs.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(uvs).position(0) as FloatBuffer
 
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+        // Any failure below must release what was already acquired: the caller
+        // swallows the exception via runCatching and falls back to the CPU encoder,
+        // so a leaked started MediaCodec/Surface/EGL context here would accumulate
+        // across retries and eventually exhaust hardware codec instances.
+        try {
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+            }
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            inputSurface = codec.createInputSurface()
+            codec.start()
+
+            setupEgl(inputSurface!!)
+            setupGl()
+
+            muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        } catch (error: Throwable) {
+            release()
+            throw error
         }
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        inputSurface = codec.createInputSurface()
-        codec.start()
-
-        setupEgl(inputSurface!!)
-        setupGl()
-
-        muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
     }
 
     private fun setupEgl(surface: Surface) {
@@ -140,9 +149,16 @@ class SurfaceVideoEncoder(
         return shader
     }
 
+    // Duplicate frames reuse the previous bitmap instance; the texture already holds
+    // those pixels, so skip the upload and just redraw with the new timestamp.
+    private var lastUploadedBitmap: Bitmap? = null
+
     override fun encodeFrame(bitmap: Bitmap, presentationTimeUs: Long) {
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        if (bitmap !== lastUploadedBitmap) {
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+            lastUploadedBitmap = bitmap
+        }
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         GLES20.glUseProgram(program)
@@ -165,16 +181,23 @@ class SurfaceVideoEncoder(
     }
 
     override fun finish() {
-        codec.signalEndOfInputStream()
-        drain(true)
-        release()
+        try {
+            codec.signalEndOfInputStream()
+            drain(true)
+        } finally {
+            release()
+        }
     }
 
     override fun release() {
         runCatching { codec.stop() }
         runCatching { codec.release() }
-        if (muxerStarted) runCatching { muxer.stop() }
-        runCatching { muxer.release() }
+        muxer?.let { active ->
+            if (muxerStarted) runCatching { active.stop() }
+            runCatching { active.release() }
+            muxer = null
+            muxerStarted = false
+        }
         runCatching {
             if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
@@ -202,19 +225,21 @@ class SurfaceVideoEncoder(
                     if (++idle > 500) return
                 }
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    if (!muxerStarted) {
-                        trackIndex = muxer.addTrack(codec.outputFormat)
-                        muxer.start()
+                    val active = muxer
+                    if (!muxerStarted && active != null) {
+                        trackIndex = active.addTrack(codec.outputFormat)
+                        active.start()
                         muxerStarted = true
                     }
                 }
                 index >= 0 -> {
                     idle = 0
                     val buffer = codec.getOutputBuffer(index)
-                    if (buffer != null && bufferInfo.size > 0 && muxerStarted) {
+                    val active = muxer
+                    if (buffer != null && bufferInfo.size > 0 && muxerStarted && active != null) {
                         buffer.position(bufferInfo.offset)
                         buffer.limit(bufferInfo.offset + bufferInfo.size)
-                        muxer.writeSampleData(trackIndex, buffer, bufferInfo)
+                        active.writeSampleData(trackIndex, buffer, bufferInfo)
                     }
                     codec.releaseOutputBuffer(index, false)
                     if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return

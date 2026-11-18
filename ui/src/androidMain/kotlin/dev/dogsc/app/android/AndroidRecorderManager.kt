@@ -38,7 +38,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -203,6 +203,7 @@ class AndroidRecorderManager(
                         completedProjectId = projectId,
                     )
                     coordinator = null
+                    activeCoordinator = null
                     projection?.stop()
                     projection = null
                     stopForegroundService()
@@ -221,6 +222,7 @@ class AndroidRecorderManager(
                 },
             )
             coordinator = newCoordinator
+            activeCoordinator = newCoordinator
             setupPending = false
             newCoordinator.start()
             // A fatal setup error clears the active state synchronously; do not background the
@@ -261,6 +263,7 @@ class AndroidRecorderManager(
         setupPending = false
         val active = coordinator
         coordinator = null
+        activeCoordinator = null
         active?.discard(notifyManager = false)
         projection?.stop()
         projection = null
@@ -272,6 +275,7 @@ class AndroidRecorderManager(
     private fun finishRecordingSession(error: String?) {
         setupPending = false
         coordinator = null
+        activeCoordinator = null
         projection?.stop()
         projection = null
         stopForegroundService()
@@ -313,6 +317,14 @@ class AndroidRecorderManager(
         const val REQUEST_PROJECTION = 9001
         const val REQUEST_PERMISSIONS = 9002
         @Volatile var instance: AndroidRecorderManager? = null
+
+        /**
+         * The live coordinator, independent of any Activity-bound manager. After an
+         * activity recreation the fresh manager has empty state; notification actions
+         * must still reach the running capture instead of stopping the foreground
+         * service underneath it.
+         */
+        @Volatile internal var activeCoordinator: RecordingCoordinator? = null
 
         /** Project currently being written; the library must not remux its live `.part` files. */
         @Volatile var activeProjectId: String? = null
@@ -373,13 +385,22 @@ internal class RecordingCoordinator(
         AndroidRecorderManager.activeProjectId = projectId
         // The journal must exist before the first fragment is written; otherwise a crash in the
         // first moments would leave an orphan media directory that the library cannot surface.
-        val journaled = runCatching {
-            runBlocking(Dispatchers.IO) { repository.saveProject(preliminaryProject()) }
-        }.getOrDefault(false)
-        if (!journaled) {
-            abortWithError("无法创建录制项目，请检查存储空间")
-            return
+        // Run the save off the main thread: it includes backup rotation copies and used to
+        // block the UI (ANR exposure on slow storage).
+        scope.launch {
+            val journaled = runCatching {
+                withContext(Dispatchers.IO) { repository.saveProject(preliminaryProject()) }
+            }.getOrDefault(false)
+            if (!journaled) {
+                abortWithError("无法创建录制项目，请检查存储空间")
+                return@launch
+            }
+            beginCapture()
         }
+    }
+
+    private fun beginCapture() {
+        if (stopping) return
         if (options.camera) {
             val recorder = CameraRecorder(context, options.cameraLensFacing, options.cameraQuality, cameraFile)
             cameraRecorder = recorder
